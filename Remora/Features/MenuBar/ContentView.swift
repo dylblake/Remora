@@ -323,32 +323,6 @@ struct ContentView: View {
 
 }
 
-/// "Completed · Undo", floating at the bottom of All Notes for a few
-/// seconds after a tick.
-private struct TodoUndoBar: View {
-    let title: String
-    let onUndo: () -> Void
-
-    var body: some View {
-        HStack(spacing: Spacing.xs) {
-            Text(title)
-                .font(.subheadline.weight(.medium))
-            Text("·")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-                .accessibilityHidden(true)
-            Button("Undo", action: onUndo)
-                .buttonStyle(.borderless)
-                .font(.subheadline.weight(.semibold))
-        }
-        .padding(.horizontal, Spacing.md)
-        .padding(.vertical, Spacing.xs)
-        .glassEffect(.regular, in: Capsule(style: .continuous))
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier("todoUndoBar")
-    }
-}
-
 /// To-dos as a compact, hand-ordered list above the tiles: one line
 /// each, dragged into whatever order the user wants to tackle them in.
 private struct TodoListSection: View {
@@ -541,7 +515,7 @@ private struct TodoRow<ReorderGesture: Gesture>: View {
         HStack(spacing: 0) {
             // A sibling of the gesture view, never inside it: a click on
             // the circle must not open the note or start a drag.
-            TodoCheckCircle(note: note, title: title, answersTickRequests: true, complete: onComplete)
+            TodoCheckCircle(noteID: note.id, title: title, answersTickRequests: true, complete: onComplete)
                 .environment(appState)
                 .padding(.leading, Spacing.xxs)
 
@@ -755,7 +729,7 @@ private struct NoteTile: View {
             // A to-do's circle is always there; "Add to To-Do" waits for
             // the pointer like the other actions.
             if note.isPinned {
-                TodoCheckCircle(note: note, title: NoteCardStyle.primaryTitle(for: note))
+                TodoCheckCircle(noteID: note.id, title: NoteCardStyle.primaryTitle(for: note))
                     .environment(appState)
             } else {
                 TodoAddButton(note: note)

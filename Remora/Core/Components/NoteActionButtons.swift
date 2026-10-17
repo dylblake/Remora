@@ -63,7 +63,8 @@ struct TodoCheckCircle: View {
     @Environment(AppState.self) private var appState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.todoTickRequest) private var tickRequest
-    let note: ContextNote
+    /// Nil for a drawer with nothing stored yet.
+    let noteID: UUID?
     /// The note's title as the caller shows it, for VoiceOver.
     let title: String
     var origin: TodoCompletionOrigin = .allNotes
@@ -72,21 +73,31 @@ struct TodoCheckCircle: View {
     /// What ticking does, in place of the plain `completeTodo`: the row
     /// wraps it in its removal animation and moves keyboard focus.
     var complete: (() -> Void)?
+    var iconSize: CGFloat = 15
+    var hitSize: CGFloat = 26
+    /// The editor footer's buttons light up under the pointer.
+    var highlightsOnHover = false
 
     @State private var isTicking = false
+    @State private var isHovered = false
 
     static let checkmarkDuration: Duration = .milliseconds(350)
 
     var body: some View {
         Button(action: tick) {
             Image(systemName: isTicking ? "checkmark.circle.fill" : "circle")
-                .font(.system(size: 15, weight: .regular))
+                .font(.system(size: iconSize, weight: .regular))
                 .foregroundStyle(isTicking ? RemoraTheme.accent : RemoraTheme.secondaryText)
                 .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
-                .frame(width: 26, height: 26)
+                .frame(width: hitSize, height: hitSize)
+                .background(
+                    Circle()
+                        .fill(highlightsOnHover && isHovered ? Color.primary.opacity(0.08) : Color.clear)
+                )
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
+        .onHover { isHovered = $0 }
         .help("Complete")
         .accessibilityLabel("Complete \u{201C}\(title)\u{201D}")
         .accessibilityAction {
@@ -95,7 +106,7 @@ struct TodoCheckCircle: View {
             commit()
         }
         .onChange(of: tickRequest) { _, request in
-            guard answersTickRequests, request?.noteID == note.id else { return }
+            guard answersTickRequests, let noteID, request?.noteID == noteID else { return }
             tick()
         }
     }
@@ -114,12 +125,39 @@ struct TodoCheckCircle: View {
     private func commit() {
         if let complete {
             complete()
-        } else {
+        } else if let noteID {
             // The row it also has in the To-Do list fades out.
             withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
-                appState.completeTodo([note.id], origin: origin)
+                appState.completeTodo([noteID], origin: origin)
             }
         }
+    }
+}
+
+/// "Completed · Undo" for a few seconds after a tick: floating at the
+/// bottom of All Notes, or in the editor footer after a footer tick.
+struct TodoUndoBar: View {
+    let title: String
+    var identifier = "todoUndoBar"
+    let onUndo: () -> Void
+
+    var body: some View {
+        HStack(spacing: Spacing.xs) {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+            Text("·")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Button("Undo", action: onUndo)
+                .buttonStyle(.borderless)
+                .font(.subheadline.weight(.semibold))
+        }
+        .padding(.horizontal, Spacing.md)
+        .padding(.vertical, Spacing.xs)
+        .glassEffect(.regular, in: Capsule(style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(identifier)
     }
 }
 

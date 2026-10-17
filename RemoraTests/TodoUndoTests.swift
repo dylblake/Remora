@@ -46,6 +46,36 @@ final class TodoUndoTests: XCTestCase {
         state.todoOrder.compactMap { id in state.notes.first { $0.id == id }?.title }
     }
 
+    private func makeEditor(_ state: NotesState) -> EditorState {
+        EditorState(
+            notesState: state,
+            richTextController: RichTextEditorController(),
+            contextResolver: ContextResolver(),
+            browserPermissions: BrowserPermissionsState(browserURLProvider: BrowserURLProvider()),
+            titleGenerator: StubTitleGenerator(),
+            isAutoTitleEnabled: { false }
+        )
+    }
+
+    /// Opens a stored note in the drawer as the editor saved it (with its
+    /// rich text), so an untouched drawer has nothing unsaved.
+    private func open(_ note: ContextNote, in editor: EditorState, state: NotesState) -> ContextNote {
+        let saved = ContextNote(
+            id: note.id,
+            context: note.context,
+            body: note.body,
+            richTextData: editor.archivedRichText(from: NSAttributedString(string: note.body)),
+            createdAt: note.createdAt,
+            updatedAt: note.updatedAt,
+            isPinned: note.isPinned,
+            title: note.title
+        )
+        state.upsert(saved)
+        editor.activeContext = saved.context
+        editor.loadEditorState(for: saved)
+        return saved
+    }
+
     // MARK: TodoUndoState
 
     func testPendingUndoClearsItselfAfterItsLifetime() async throws {
@@ -185,14 +215,7 @@ final class TodoUndoTests: XCTestCase {
         let (state, directory) = try makeState()
         defer { try? FileManager.default.removeItem(at: directory) }
         let notes = seeded(state)
-        let editor = EditorState(
-            notesState: state,
-            richTextController: RichTextEditorController(),
-            contextResolver: ContextResolver(),
-            browserPermissions: BrowserPermissionsState(browserURLProvider: BrowserURLProvider()),
-            titleGenerator: StubTitleGenerator(),
-            isAutoTitleEnabled: { false }
-        )
+        let editor = makeEditor(state)
         editor.activeContext = notes[1].context
         editor.loadEditorState(for: notes[1])
         XCTAssertTrue(editor.isActiveNotePinned)
@@ -209,5 +232,60 @@ final class TodoUndoTests: XCTestCase {
         state.addToTodo([notes[3].id])
         editor.syncActiveNoteTodoFlag()
         XCTAssertTrue(editor.isActiveNotePinned)
+    }
+
+    // MARK: Editor footer
+
+    /// A footer tick with nothing typed changes only the flag: the tile
+    /// keeps its date and place in the grid, and Undo knows the index.
+    func testAFooterTickWithoutTypingKeepsTheDate() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let notes = seeded(state)
+        let editor = makeEditor(state)
+        let b = open(notes[1], in: editor, state: state)
+
+        XCTAssertFalse(editor.hasUnpersistedChanges())
+        let stored = try XCTUnwrap(editor.storedActiveNoteSavingTyping())
+        let completion = try XCTUnwrap(state.completeTodos([stored.id]))
+
+        XCTAssertEqual(completion.entries.map { $0.index }, [1])
+        XCTAssertEqual(state.note(for: b.context)?.updatedAt, b.updatedAt)
+        XCTAssertEqual(state.note(for: b.context)?.isPinned, false)
+    }
+
+    /// With unsaved typing the text is saved first (a real edit, so it
+    /// gets a new date) and the note is still ticked from where it sat.
+    func testAFooterTickSavesUnsavedTypingFirst() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let notes = seeded(state)
+        let editor = makeEditor(state)
+        let b = open(notes[1], in: editor, state: state)
+        editor.editorAttributedText = NSAttributedString(string: "b and more")
+
+        XCTAssertTrue(editor.hasUnpersistedChanges())
+        let stored = try XCTUnwrap(editor.storedActiveNoteSavingTyping())
+        XCTAssertEqual(stored.body, "b and more")
+        XCTAssertGreaterThan(stored.updatedAt, b.updatedAt)
+        XCTAssertTrue(stored.isPinned)
+
+        let completion = try XCTUnwrap(state.completeTodos([stored.id]))
+        XCTAssertEqual(completion.entries.map { $0.index }, [1])
+    }
+
+    /// An empty new drawer has nothing stored: there's nothing to tick or
+    /// restore, and nothing gets created.
+    func testAnEmptyNewDrawerHasNoStoredNote() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        _ = seeded(state)
+        let editor = makeEditor(state)
+        let fresh = note("fresh", pinned: false)
+        editor.activeContext = fresh.context
+        editor.loadEditorState(for: fresh.context)
+
+        XCTAssertNil(editor.storedActiveNoteSavingTyping())
+        XCTAssertEqual(state.notes.count, 4)
     }
 }

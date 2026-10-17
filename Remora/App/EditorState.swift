@@ -20,6 +20,7 @@ final class EditorState {
     var editorErrorMessage: String?
     var isEditorPresented = false
     var isViewingOrphanedNote = false
+    /// On To-Do.
     var isActiveNotePinned = false
     private var contextPollingTask: Task<Void, Never>?
     private var autosaveTask: Task<Void, Never>?
@@ -123,6 +124,18 @@ final class EditorState {
         isActiveNotePinned = stored.isPinned
     }
 
+    /// The open note as stored, after saving any typing first, for the
+    /// footer's to-do control. Typing is a real edit, so that save writes
+    /// a new date; a flag change on its own never does. Nil when nothing
+    /// is stored yet (an empty new drawer).
+    func storedActiveNoteSavingTyping() -> ContextNote? {
+        guard let context = activeContext else { return nil }
+        if hasUnpersistedChanges() {
+            persistCurrentEditorContent(deleteIfEmpty: false)
+        }
+        return notesState.note(for: context)
+    }
+
     // MARK: - Persistence
 
     @discardableResult
@@ -197,6 +210,14 @@ final class EditorState {
         }
 
         persistCurrentEditorContent(deleteIfEmpty: false)
+    }
+
+    /// True when the drawer holds typing that isn't stored yet.
+    func hasUnpersistedChanges() -> Bool {
+        guard let context = activeContext else { return false }
+        let currentAttributedText = currentEditorAttributedTextSnapshot()
+        let trimmed = currentAttributedText.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return hasUnpersistedChanges(context: context, attributedText: currentAttributedText, trimmedBody: trimmed)
     }
 
     /// True when the editor buffer differs from what's stored for this

@@ -1155,19 +1155,27 @@ final class AppState {
         dismissEditor()
     }
 
-    func togglePinForActiveNote() {
-        guard let context = editor.activeContext else { return }
-
-        let nextPinnedState = !editor.isActiveNotePinned
-        editor.isActiveNotePinned = nextPinnedState
-
-        // Persist writes the editor's content with the new pin state; when
-        // the editor is empty it declines (returning false) — in that case
-        // just flip the pin on an existing note, if any.
-        if !editor.persistCurrentEditorContent(deleteIfEmpty: false),
-           let existingNote = notesState.note(for: context) {
-            notesState.upsert(existingNote.copying(updatedAt: .now, isPinned: nextPinnedState))
+    /// The editor footer's "Add to To-Do". Saves any typing first; an
+    /// empty new drawer just remembers the flag for when it's saved.
+    func addActiveNoteToTodo() {
+        guard editor.activeContext != nil else { return }
+        guard let note = editor.storedActiveNoteSavingTyping() else {
+            editor.isActiveNotePinned = true
+            return
         }
+        addToTodo([note])
+    }
+
+    /// The editor footer's circle: ticks the open note off with the
+    /// footer's "Completed · Undo". An empty new drawer has nothing to
+    /// restore, so it only clears the flag, with no undo bar.
+    func completeActiveNote() {
+        guard editor.activeContext != nil else { return }
+        guard let note = editor.storedActiveNoteSavingTyping() else {
+            editor.isActiveNotePinned = false
+            return
+        }
+        completeTodo([note.id], origin: .editor)
     }
 
     func setOnboardingWindowVisible(_ isVisible: Bool) {
