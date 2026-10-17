@@ -1108,9 +1108,19 @@ final class AppState {
         }
     }
 
+    // Interim wrappers over the to-do operations (replaced by the
+    // to-do coordinator next).
     func togglePinForSelectedNotes() {
         let selected = notesState.selectedNoteIDs
-        guard let nextPinned = notesState.togglePinForSelectedNotes() else { return }
+        guard !selected.isEmpty else { return }
+        let selectedNotes = notesState.notes.filter { selected.contains($0.id) }
+        let nextPinned = !selectedNotes.allSatisfy(\.isPinned)
+        if nextPinned {
+            notesState.addToTodo(selected)
+        } else {
+            notesState.completeTodos(selectedNotes.map(\.id))
+        }
+        notesState.clearSelection()
 
         if let context = editor.activeContext,
            let active = notesState.note(for: context),
@@ -1120,7 +1130,11 @@ final class AppState {
     }
 
     func togglePin(_ note: ContextNote) {
-        notesState.togglePin(note)
+        if note.isPinned {
+            notesState.completeTodos([note.id])
+        } else {
+            notesState.addToTodo([note.id])
+        }
 
         if editor.activeContext?.id == note.context.id {
             editor.isActiveNotePinned = !note.isPinned

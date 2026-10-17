@@ -73,7 +73,7 @@ final class TodoOrderTests: XCTestCase {
 
     // MARK: NotesState
 
-    func testPinningAppendsToTheEndAndUnpinningRemoves() throws {
+    func testAddingAppendsToTheEndAndCompletingRemoves() throws {
         let (state, directory) = try makeState()
         defer { try? FileManager.default.removeItem(at: directory) }
 
@@ -83,13 +83,142 @@ final class TodoOrderTests: XCTestCase {
         state.upsert(second)
         XCTAssertEqual(todoTitles(state), ["first"])
 
-        state.togglePin(second)
+        state.addToTodo([second.id])
         XCTAssertEqual(todoTitles(state), ["first", "second"])
         XCTAssertEqual(state.todoCount, 2)
 
-        state.togglePin(try XCTUnwrap(state.note(for: first.context)))
+        let completion = state.completeTodos([first.id])
+        XCTAssertEqual(completion?.entries, [TodoCompletion.Entry(noteID: first.id, index: 0)])
         XCTAssertEqual(todoTitles(state), ["second"])
         XCTAssertEqual(state.todoOrder, [second.id])
+        XCTAssertEqual(state.note(for: first.context)?.isPinned, false)
+    }
+
+    func testCompletingNotesThatAreNotOnTheListReturnsNil() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let loose = note("loose", pinned: false)
+        state.upsert(loose)
+
+        XCTAssertNil(state.completeTodos([loose.id, UUID()]))
+        XCTAssertEqual(state.todoOrder, [])
+    }
+
+    /// Adding, ticking and undoing never touch `updatedAt`, so a tile
+    /// keeps its place in the newest-first grid and its date.
+    func testFlagChangesKeepUpdatedAt() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let a = note("a", pinned: false, updated: 10)
+        let b = note("b", pinned: true, updated: 20)
+        state.upsert(a)
+        state.upsert(b)
+
+        state.addToTodo([a.id])
+        let completion = try XCTUnwrap(state.completeTodos([b.id]))
+        state.restore(completion)
+
+        XCTAssertEqual(state.note(for: a.context)?.updatedAt, a.updatedAt)
+        XCTAssertEqual(state.note(for: b.context)?.updatedAt, b.updatedAt)
+    }
+
+    func testCompleteThenRestoreGivesBackTheSameOrder() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let notes = ["a", "b", "c", "d", "e"].map { note($0, pinned: true) }
+        notes.forEach(state.upsert)
+        let before = state.todoOrder
+
+        let single = try XCTUnwrap(state.completeTodos([notes[2].id]))
+        state.restore(single)
+        XCTAssertEqual(state.todoOrder, before)
+
+        // A batch, listed out of order, comes back in its previous order.
+        let batch = try XCTUnwrap(state.completeTodos([notes[3].id, notes[0].id, notes[4].id]))
+        XCTAssertEqual(batch.entries.map(\.index), [0, 3, 4])
+        XCTAssertEqual(todoTitles(state), ["b", "c"])
+        state.restore(batch)
+        XCTAssertEqual(state.todoOrder, before)
+        XCTAssertEqual(todoTitles(state), ["a", "b", "c", "d", "e"])
+        XCTAssertTrue(notes.allSatisfy { state.note(for: $0.context)?.isPinned == true })
+    }
+
+    func testRestoreSkipsANoteDeletedInTheMeantime() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let notes = ["a", "b", "c"].map { note($0, pinned: true) }
+        notes.forEach(state.upsert)
+
+        let completion = try XCTUnwrap(state.completeTodos([notes[0].id, notes[1].id]))
+        state.delete(try XCTUnwrap(state.note(for: notes[0].context)))
+        state.restore(completion)
+
+        XCTAssertEqual(todoTitles(state), ["b", "c"])
+        XCTAssertNil(state.note(for: notes[0].context))
+    }
+
+    func testRestorePersistsAcrossReload() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let notes = ["a", "b", "c"].map { note($0, pinned: true) }
+        notes.forEach(state.upsert)
+        state.restore(try XCTUnwrap(state.completeTodos([notes[0].id])))
+
+        state.flush()
+        let reloaded = NotesState(store: NoteStore(directoryOverride: directory))
+        XCTAssertEqual(todoTitles(reloaded), ["a", "b", "c"])
+    }
+
+    // MARK: restoringOrder
+
+    func testRestoringOrderPutsOneNoteBackAtItsIndex() {
+        let (a, b, c) = (UUID(), UUID(), UUID())
+        XCTAssertEqual(
+            NotesState.restoringOrder([a, c], inserting: [.init(noteID: b, index: 1)]),
+            [a, b, c]
+        )
+    }
+
+    func testRestoringOrderPutsANonAdjacentBatchBack() {
+        let ids = (0..<6).map { _ in UUID() }
+        let current = [ids[1], ids[2], ids[4]]
+        let entries: [TodoCompletion.Entry] = [
+            .init(noteID: ids[0], index: 0),
+            .init(noteID: ids[3], index: 3),
+            .init(noteID: ids[5], index: 5)
+        ]
+        XCTAssertEqual(NotesState.restoringOrder(current, inserting: entries), ids)
+    }
+
+    func testRestoringOrderClampsAnIndexPastTheEnd() {
+        let (a, b) = (UUID(), UUID())
+        XCTAssertEqual(
+            NotesState.restoringOrder([a], inserting: [.init(noteID: b, index: 7)]),
+            [a, b]
+        )
+    }
+
+    /// A note added during the undo window stays where it went; the
+    /// restored note goes back to its own index.
+    func testRestoringOrderWithANoteAddedInBetween() {
+        let (a, b, c, added) = (UUID(), UUID(), UUID(), UUID())
+        XCTAssertEqual(
+            NotesState.restoringOrder([a, c, added], inserting: [.init(noteID: b, index: 1)]),
+            [a, b, c, added]
+        )
+    }
+
+    func testRestoringOrderDoesNotDuplicateAnIDAlreadyThere() {
+        let (a, b) = (UUID(), UUID())
+        XCTAssertEqual(
+            NotesState.restoringOrder([a, b], inserting: [.init(noteID: b, index: 0)]),
+            [b, a]
+        )
     }
 
     func testReorderPersistsAcrossReload() throws {
