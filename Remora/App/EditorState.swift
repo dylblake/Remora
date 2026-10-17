@@ -115,6 +115,14 @@ final class EditorState {
         isActiveNotePinned = note.isPinned
     }
 
+    /// Picks up a change to the open note's To-Do flag made elsewhere (a
+    /// tick or undo in All Notes), so the next save doesn't write the old
+    /// flag back. A drawer with no stored note yet keeps its own flag.
+    func syncActiveNoteTodoFlag() {
+        guard let context = activeContext, let stored = notesState.note(for: context) else { return }
+        isActiveNotePinned = stored.isPinned
+    }
+
     // MARK: - Persistence
 
     @discardableResult

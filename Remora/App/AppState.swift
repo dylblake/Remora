@@ -20,6 +20,8 @@ final class AppState {
     let browserPermissions: BrowserPermissionsState
     let notesState: NotesState
     let editor: EditorState
+    /// The single "Completed · Undo" slot shared by All Notes and the editor.
+    let todoUndo = TodoUndoState()
     let hotkeys: HotKeyState
     /// Where All Notes is: not shown, alone at the screen edge, or out
     /// from under the open note drawer, beside it.
@@ -1108,37 +1110,37 @@ final class AppState {
         }
     }
 
-    // Interim wrappers over the to-do operations (replaced by the
-    // to-do coordinator next).
-    func togglePinForSelectedNotes() {
-        let selected = notesState.selectedNoteIDs
-        guard !selected.isEmpty else { return }
-        let selectedNotes = notesState.notes.filter { selected.contains($0.id) }
-        let nextPinned = !selectedNotes.allSatisfy(\.isPinned)
-        if nextPinned {
-            notesState.addToTodo(selected)
-        } else {
-            notesState.completeTodos(selectedNotes.map(\.id))
-        }
-        notesState.clearSelection()
+    // MARK: - To-Do
 
-        if let context = editor.activeContext,
-           let active = notesState.note(for: context),
-           selected.contains(active.id) {
-            editor.isActiveNotePinned = nextPinned
-        }
+    /// Puts notes at the bottom of the To-Do list.
+    func addToTodo(_ notes: [ContextNote]) {
+        notesState.addToTodo(Set(notes.map(\.id)))
+        editor.syncActiveNoteTodoFlag()
     }
 
-    func togglePin(_ note: ContextNote) {
-        if note.isPinned {
-            notesState.completeTodos([note.id])
-        } else {
-            notesState.addToTodo([note.id])
-        }
+    /// Ticks notes off To-Do and offers "Completed · Undo" for them,
+    /// replacing whatever undo was pending.
+    func completeTodo(_ noteIDs: [UUID], origin: TodoCompletionOrigin) {
+        guard let completion = notesState.completeTodos(noteIDs) else { return }
+        todoUndo.register(completion, origin: origin)
+        editor.syncActiveNoteTodoFlag()
+    }
 
-        if editor.activeContext?.id == note.context.id {
-            editor.isActiveNotePinned = !note.isPinned
+    /// Puts the most recent tick (or batch) back where it was. Does
+    /// nothing once the undo has expired.
+    func undoLastCompletion() {
+        guard let completion = todoUndo.take() else { return }
+        notesState.restore(completion)
+        editor.syncActiveNoteTodoFlag()
+    }
+
+    /// The multi-select bar: ticks the batch when every selected note is
+    /// on To-Do, otherwise adds the rest.
+    func toggleTodoForSelectedNotes() {
+        if let completion = notesState.toggleTodoForSelectedNotes() {
+            todoUndo.register(completion, origin: .allNotes)
         }
+        editor.syncActiveNoteTodoFlag()
     }
 
     func deleteActiveNote() {

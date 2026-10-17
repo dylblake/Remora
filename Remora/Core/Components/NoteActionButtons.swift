@@ -29,7 +29,11 @@ struct NotePinButton: View {
 
     var body: some View {
         Button {
-            appState.togglePin(note)
+            if note.isPinned {
+                appState.completeTodo([note.id], origin: .allNotes)
+            } else {
+                appState.addToTodo([note])
+            }
         } label: {
             Image(systemName: note.isPinned ? "pin.fill" : "pin")
                 .font(.system(size: 14, weight: .semibold))

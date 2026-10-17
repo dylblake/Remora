@@ -246,7 +246,7 @@ struct ContentView: View {
             .controlSize(.small)
 
             IconButton(systemName: "pin", accessibilityLabel: "Add or remove selected notes from To-Do", size: 13, hitSize: 30) {
-                appState.togglePinForSelectedNotes()
+                appState.toggleTodoForSelectedNotes()
             }
 
             IconButton(systemName: "trash", accessibilityLabel: "Delete selected notes", size: 13, hitSize: 30) {
@@ -486,7 +486,7 @@ private struct TodoRow<ReorderGesture: Gesture>: View {
         .onHover { isHovered = $0 }
         .contextMenu {
             Button("Open") { appState.open(note) }
-            Button("Remove from To-Do") { appState.togglePin(note) }
+            Button("Remove from To-Do") { appState.completeTodo([note.id], origin: .allNotes) }
         }
     }
 
