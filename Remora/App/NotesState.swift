@@ -175,6 +175,12 @@ final class NotesState {
         guard !entries.isEmpty else { return nil }
 
         let completed = Set(entries.map(\.noteID))
+        // Whatever ticked it (its row, its tile, the multi-select bar, the
+        // editor), a focused row hands focus on before it goes.
+        if let focus = keyboardFocus, focus.sectionID == NoteSectionBuilder.todoSectionID,
+           completed.contains(focus.noteID) {
+            keyboardFocus = NoteSectionBuilder.focusAfterTicking(focus, in: noteSections, alongWith: completed)
+        }
         notes = notes.map { completed.contains($0.id) ? $0.copying(isPinned: false) : $0 }
         save()
         return TodoCompletion(entries: entries)

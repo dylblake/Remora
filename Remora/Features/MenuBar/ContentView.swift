@@ -467,13 +467,9 @@ private struct TodoListSection: View {
     // MARK: Ticking
 
     /// The circle, the context menu and VoiceOver's Complete. A focused
-    /// row hands keyboard focus on before it goes.
+    /// row hands keyboard focus on before it goes (`completeTodos` does
+    /// that, whichever control ticked it).
     private func complete(_ note: ContextNote) {
-        let notesState = appState.notesState
-        let row = ListFocus(sectionID: section.id, noteID: note.id)
-        if notesState.keyboardFocus == row {
-            notesState.keyboardFocus = NoteSectionBuilder.focusAfterTicking(row, in: notesState.noteSections)
-        }
         withAnimation(settle) {
             appState.completeTodo([note.id], origin: .allNotes)
         }

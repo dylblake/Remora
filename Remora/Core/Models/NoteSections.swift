@@ -44,9 +44,11 @@ enum NoteSectionBuilder {
 
     /// Where keyboard focus goes when the focused To-Do row is ticked:
     /// the next row, else the previous one, else the first tile. Uses the
-    /// sections from before the tick.
-    static func focusAfterTicking(_ row: ListFocus, in sections: [NoteSection]) -> ListFocus? {
-        let rows = sections.first { $0.id == todoSectionID }?.notes ?? []
+    /// sections from before the tick. Rows ticked in the same batch
+    /// (`alongWith`) are skipped.
+    static func focusAfterTicking(_ row: ListFocus, in sections: [NoteSection], alongWith batch: Set<UUID> = []) -> ListFocus? {
+        let rows = (sections.first { $0.id == todoSectionID }?.notes ?? [])
+            .filter { $0.id == row.noteID || !batch.contains($0.id) }
         if let index = rows.firstIndex(where: { $0.id == row.noteID }) {
             let neighbor = rows.indices.contains(index + 1) ? rows[index + 1]
                 : rows.indices.contains(index - 1) ? rows[index - 1] : nil

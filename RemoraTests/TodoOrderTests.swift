@@ -174,6 +174,43 @@ final class TodoOrderTests: XCTestCase {
         XCTAssertEqual(state.note(for: first.context)?.isPinned, false)
     }
 
+    /// Ticking a note from anywhere (its tile, the multi-select bar, the
+    /// editor) hands keyboard focus on when its To-Do row has it, so focus
+    /// never sits on a row that's gone.
+    func testCompletingAFocusedRowFromAnywhereMovesFocusOn() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let a = note("a", pinned: true, updated: 1)
+        let b = note("b", pinned: true, updated: 2)
+        let c = note("c", pinned: true, updated: 3)
+        let d = note("d", pinned: false, updated: 4)
+        [a, b, c, d].forEach(state.upsert)
+        state.reorderTodo(visibleOrder: [a.id, b.id, c.id])
+        let row = { (n: ContextNote) in ListFocus(sectionID: NoteSectionBuilder.todoSectionID, noteID: n.id) }
+        let tile = { (n: ContextNote) in ListFocus(sectionID: NoteSectionBuilder.notesSectionID, noteID: n.id) }
+
+        state.keyboardFocus = row(b)
+        state.completeTodos([b.id])
+        XCTAssertEqual(state.keyboardFocus, row(c))
+
+        // A batch skips the rows leaving with it.
+        state.addToTodo([b.id])
+        state.reorderTodo(visibleOrder: [a.id, b.id, c.id])
+        state.keyboardFocus = row(b)
+        state.completeTodos([b.id, c.id])
+        XCTAssertEqual(state.keyboardFocus, row(a))
+
+        // The last row goes: the first tile takes focus.
+        state.completeTodos([a.id])
+        XCTAssertEqual(state.keyboardFocus, tile(d))
+
+        // A focused tile stays put: the tile doesn't leave.
+        state.addToTodo([a.id])
+        state.keyboardFocus = tile(a)
+        state.completeTodos([a.id])
+        XCTAssertEqual(state.keyboardFocus, tile(a))
+    }
+
     func testCompletingNotesThatAreNotOnTheListReturnsNil() throws {
         let (state, directory) = try makeState()
         defer { try? FileManager.default.removeItem(at: directory) }
