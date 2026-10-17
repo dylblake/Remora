@@ -338,6 +338,31 @@ final class TodoOrderTests: XCTestCase {
         )
     }
 
+    /// VoiceOver's Move Up / Move Down on a row swap it with its
+    /// neighbour, and the new order is stored. The first row can't move
+    /// up, the last can't move down.
+    func testVoiceOverMoveUpAndDownReorderAndPersist() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let notes = ["a", "b", "c"].map { note($0, pinned: true) }
+        notes.forEach(state.upsert)
+        state.reorderTodo(visibleOrder: notes.map(\.id))
+        let visible = { state.todoOrder }
+
+        state.moveTodo(notes[0].id, by: 1, among: visible())
+        XCTAssertEqual(todoTitles(state), ["b", "a", "c"])
+        state.moveTodo(notes[2].id, by: -1, among: visible())
+        XCTAssertEqual(todoTitles(state), ["b", "c", "a"])
+
+        state.moveTodo(notes[1].id, by: -1, among: visible())
+        state.moveTodo(notes[0].id, by: 1, among: visible())
+        XCTAssertEqual(todoTitles(state), ["b", "c", "a"], "no move past either end")
+
+        state.flush()
+        let reloaded = NotesState(store: NoteStore(directoryOverride: directory))
+        XCTAssertEqual(todoTitles(reloaded), ["b", "c", "a"])
+    }
+
     func testReorderPersistsAcrossReload() throws {
         let (state, directory) = try makeState()
         defer { try? FileManager.default.removeItem(at: directory) }

@@ -251,6 +251,15 @@ final class NotesState {
         save()
     }
 
+    /// VoiceOver's Move Up (-1) / Move Down (+1) on a To-Do row: swaps
+    /// it with its neighbour among the rows on screen (`visibleOrder`).
+    func moveTodo(_ id: UUID, by delta: Int, among visibleOrder: [UUID]) {
+        var ids = visibleOrder
+        guard let index = ids.firstIndex(of: id), ids.indices.contains(index + delta) else { return }
+        ids.swapAt(index, index + delta)
+        reorderTodo(visibleOrder: ids)
+    }
+
     func flush() {
         store.flush()
     }

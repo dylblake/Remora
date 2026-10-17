@@ -47,6 +47,12 @@ final class TodoUndoState {
         }
     }
 
+    /// The pending undo if it came from `origin`: each place shows only
+    /// its own ticks' bar (a footer tick's undo stays in the footer).
+    func pending(from origin: TodoCompletionOrigin) -> Pending? {
+        pending?.origin == origin ? pending : nil
+    }
+
     /// "Completed", or "Completed 3" for a batch.
     nonisolated static func barTitle(for completion: TodoCompletion) -> String {
         let count = completion.entries.count

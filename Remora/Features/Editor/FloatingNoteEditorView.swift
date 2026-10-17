@@ -289,7 +289,7 @@ struct FloatingNoteEditorView: View {
     /// Moving the drawer to another note drops the bar; the undo itself
     /// lives on until it expires.
     private var footerUndo: TodoUndoState.Pending? {
-        guard let pending = appState.todoUndo.pending, pending.origin == .editor,
+        guard let pending = appState.todoUndo.pending(from: .editor),
               let noteID = activeStoredNote?.id,
               pending.completion.noteIDs.contains(noteID) else { return nil }
         return pending

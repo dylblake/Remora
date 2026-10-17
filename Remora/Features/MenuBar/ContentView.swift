@@ -114,14 +114,15 @@ struct ContentView: View {
                 hiddenShortcut("f") { searchFocusRequestID = UUID() }
                 // ⌘Return ticks the focused To-Do row.
                 hiddenShortcut(.return) { tickKeyboardFocusedRow() }
-                // ⌘Z exists only while a tick can be undone, so it never
-                // swallows the key otherwise.
-                if appState.todoUndo.pending != nil {
+                // ⌘Z exists only while this list's bar is showing, so it
+                // never swallows the key otherwise, and steps aside while
+                // the search field has the caret: there it undoes typing.
+                if allNotesUndo != nil, !isSearchFieldFocused {
                     hiddenShortcut("z") { undoLastCompletion() }
                 }
             }
             .overlay(alignment: .bottom) {
-                if let pending = appState.todoUndo.pending {
+                if let pending = allNotesUndo {
                     TodoUndoBar(title: TodoUndoState.barTitle(for: pending.completion)) {
                         undoLastCompletion()
                     }
@@ -131,7 +132,7 @@ struct ContentView: View {
                         : .opacity.combined(with: .move(edge: .bottom)))
                 }
             }
-            .animation(PanelAnimation.prefersReducedMotion ? nil : .easeOut(duration: 0.18), value: appState.todoUndo.pending?.token)
+            .animation(PanelAnimation.prefersReducedMotion ? nil : .easeOut(duration: 0.18), value: allNotesUndo?.token)
             .onChange(of: appState.notesState.allNotesScrollResetID) { _, _ in
                 proxy.scrollTo("top", anchor: .top)
                 isListFocused = true
@@ -139,6 +140,13 @@ struct ContentView: View {
         }
 
         content
+    }
+
+    /// The pending undo when it's for a tick made here (a row, a tile,
+    /// the multi-select bar, ⌘Return). A footer tick shows its undo in
+    /// the footer only.
+    private var allNotesUndo: TodoUndoState.Pending? {
+        appState.todoUndo.pending(from: .allNotes)
     }
 
     private func hiddenShortcut(_ key: KeyEquivalent, action: @escaping () -> Void) -> some View {
@@ -291,8 +299,9 @@ struct ContentView: View {
             .buttonStyle(.borderless)
             .controlSize(.small)
 
+            // Ticks when every selected note is on To-Do, adds otherwise.
             IconButton(
-                systemName: "circle.badge.plus",
+                systemName: appState.notesState.selectionIsAllOnTodo ? "checkmark.circle" : "circle.badge.plus",
                 accessibilityLabel: appState.notesState.selectionIsAllOnTodo ? "Complete selected notes" : "Add selected notes to To-Do",
                 size: 13,
                 hitSize: 30
@@ -477,11 +486,8 @@ private struct TodoListSection: View {
 
     /// VoiceOver's Move Up / Move Down.
     private func move(_ note: ContextNote, by delta: Int, in notes: [ContextNote]) {
-        var ids = notes.map(\.id)
-        guard let index = ids.firstIndex(of: note.id), ids.indices.contains(index + delta) else { return }
-        ids.swapAt(index, index + delta)
         withAnimation(settle) {
-            appState.notesState.reorderTodo(visibleOrder: ids)
+            appState.notesState.moveTodo(note.id, by: delta, among: notes.map(\.id))
         }
     }
 }

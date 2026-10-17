@@ -116,6 +116,20 @@ final class TodoUndoTests: XCTestCase {
         XCTAssertNil(undo.pending)
     }
 
+    /// Each place shows only its own ticks' bar: a footer tick's undo
+    /// isn't offered in All Notes, and an All Notes tick's isn't in the
+    /// footer (so ⌘Z in All Notes only takes back what its bar shows).
+    func testEachPlaceSeesOnlyItsOwnTicksUndo() {
+        let undo = TodoUndoState()
+        undo.register(TodoCompletion(entries: [.init(noteID: UUID(), index: 0)]), origin: .editor)
+        XCTAssertNotNil(undo.pending(from: .editor))
+        XCTAssertNil(undo.pending(from: .allNotes))
+
+        undo.register(TodoCompletion(entries: [.init(noteID: UUID(), index: 1)]), origin: .allNotes)
+        XCTAssertNotNil(undo.pending(from: .allNotes))
+        XCTAssertNil(undo.pending(from: .editor), "the newer tick replaced the footer's")
+    }
+
     func testTheBarSaysCompletedAndCountsABatch() {
         let one = TodoCompletion(entries: [.init(noteID: UUID(), index: 0)])
         let three = TodoCompletion(entries: (0..<3).map { .init(noteID: UUID(), index: $0) })
