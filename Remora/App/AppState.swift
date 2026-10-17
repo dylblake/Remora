@@ -699,7 +699,7 @@ final class AppState {
         // wait for the disk. The slide runs in the render server meanwhile.
         panelController?.dismiss()
         closeStackedAllNotes()
-        editor.persistCurrentEditorContent()
+        editor.persistCurrentEditorContentIfChanged()
         notesState.flush()
         resetEditorAfterDismiss()
     }
@@ -819,7 +819,7 @@ final class AppState {
 
         // So the list shows what has just been typed. An empty drawer
         // isn't a note yet, and isn't a reason to delete one either.
-        editor.persistCurrentEditorContent(deleteIfEmpty: false)
+        editor.persistCurrentEditorContentIfChanged(deleteIfEmpty: false)
         resetAllNotesBrowsing()
         allNotesUsesStackedLayout = true
         allNotesMode = .stacked
@@ -956,7 +956,7 @@ final class AppState {
                 return
             }
             endDictationForDismiss()
-            editor.persistCurrentEditorContent()
+            editor.persistCurrentEditorContentIfChanged()
             notesState.flush()
             editor.isViewingOrphanedNote = false
             // Hold the drawer on the picked note while its page or file
@@ -1090,7 +1090,7 @@ final class AppState {
     func relinkOrphanedNoteToCurrentContext() {
         guard editor.isViewingOrphanedNote,
               let oldContext = editor.activeContext,
-              let note = notesState.note(for: oldContext) else { return }
+              let noteID = notesState.note(for: oldContext)?.id else { return }
 
         Task { [weak self] in
             guard let self else { return }
@@ -1103,6 +1103,9 @@ final class AppState {
                 return
             }
 
+            // Read again: a tick or edit while the context resolved must
+            // not be written back over.
+            guard let note = self.notesState.notes.first(where: { $0.id == noteID }) else { return }
             self.notesState.upsert(note.copying(context: newContext, updatedAt: .now))
             self.editor.activeContext = newContext
             self.editor.isViewingOrphanedNote = false
@@ -1169,8 +1172,11 @@ final class AppState {
     /// The editor footer's circle: ticks the open note off with the
     /// footer's "Completed · Undo". An empty new drawer has nothing to
     /// restore, so it only clears the flag, with no undo bar.
-    func completeActiveNote() {
-        guard editor.activeContext != nil else { return }
+    /// `noteID` is the note the circle was clicked on (nil for an empty
+    /// drawer): the tick lands after its checkmark, and if the drawer has
+    /// moved to another note by then, nothing happens.
+    func completeActiveNote(expecting noteID: UUID?) {
+        guard editor.isShowingStoredNote(noteID) else { return }
         guard let note = editor.storedActiveNoteSavingTyping() else {
             editor.isActiveNotePinned = false
             return

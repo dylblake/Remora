@@ -248,17 +248,20 @@ struct FloatingNoteEditorView: View {
     @ViewBuilder
     private var todoButton: some View {
         if appState.editor.isActiveNotePinned {
+            let noteID = activeStoredNote?.id
             TodoCheckCircle(
-                noteID: activeStoredNote?.id,
+                noteID: noteID,
                 title: activeNoteTitle,
                 origin: .editor,
-                complete: { appState.completeActiveNote() },
+                // The note it was clicked on: the tick lands after the
+                // checkmark, when the drawer may hold another note.
+                complete: { appState.completeActiveNote(expecting: noteID) },
                 iconSize: 14,
                 hitSize: 34,
                 highlightsOnHover: true
             )
             // A fresh circle each time, so a tick's checkmark never lingers.
-            .id(activeStoredNote?.id)
+            .id(noteID)
         } else {
             IconButton(
                 systemName: "circle.badge.plus",

@@ -274,6 +274,111 @@ final class TodoUndoTests: XCTestCase {
         XCTAssertEqual(completion.entries.map { $0.index }, [1])
     }
 
+    /// The footer's tick lands after its checkmark: it only goes ahead
+    /// while the drawer still holds the note the circle was clicked on.
+    func testAFooterTickOnlyLandsOnTheNoteItWasClickedOn() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let notes = seeded(state)
+        let editor = makeEditor(state)
+        let b = open(notes[1], in: editor, state: state)
+        XCTAssertTrue(editor.isShowingStoredNote(b.id))
+
+        // The drawer moves to Charlie during the checkmark.
+        let c = open(notes[2], in: editor, state: state)
+        XCTAssertFalse(editor.isShowingStoredNote(b.id))
+        XCTAssertTrue(editor.isShowingStoredNote(c.id))
+        XCTAssertFalse(editor.isShowingStoredNote(nil), "Charlie is stored")
+
+        // An empty new drawer is the nil note.
+        let fresh = note("fresh", pinned: false)
+        editor.activeContext = fresh.context
+        editor.loadEditorState(for: fresh.context)
+        XCTAssertTrue(editor.isShowingStoredNote(nil))
+        XCTAssertFalse(editor.isShowingStoredNote(c.id))
+    }
+
+    // MARK: Closing the drawer
+
+    /// Opening a note and closing it untouched keeps its date, so its
+    /// tile doesn't jump to the top of the grid.
+    func testClosingAnUntouchedNoteKeepsItsDate() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let notes = seeded(state)
+        let editor = makeEditor(state)
+        let b = open(notes[1], in: editor, state: state)
+
+        XCTAssertFalse(editor.persistCurrentEditorContentIfChanged())
+        XCTAssertEqual(state.note(for: b.context)?.updatedAt, b.updatedAt)
+    }
+
+    /// A footer tick then Escape: the tick stays and the tile keeps its
+    /// place (C6).
+    func testClosingAfterAFooterTickKeepsTheTickAndTheDate() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let notes = seeded(state)
+        let editor = makeEditor(state)
+        let b = open(notes[1], in: editor, state: state)
+
+        let stored = try XCTUnwrap(editor.storedActiveNoteSavingTyping())
+        XCTAssertNotNil(state.completeTodos([stored.id]))
+        editor.syncActiveNoteTodoFlag()
+        editor.persistCurrentEditorContentIfChanged()
+
+        let after = try XCTUnwrap(state.note(for: b.context))
+        XCTAssertFalse(after.isPinned)
+        XCTAssertEqual(after.updatedAt, b.updatedAt)
+    }
+
+    /// Typing is a real edit: closing saves it with a new date.
+    func testClosingAfterTypingSaves() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let notes = seeded(state)
+        let editor = makeEditor(state)
+        let b = open(notes[1], in: editor, state: state)
+        editor.editorAttributedText = NSAttributedString(string: "b, edited")
+
+        XCTAssertTrue(editor.persistCurrentEditorContentIfChanged())
+        let after = try XCTUnwrap(state.note(for: b.context))
+        XCTAssertEqual(after.body, "b, edited")
+        XCTAssertGreaterThan(after.updatedAt, b.updatedAt)
+    }
+
+    /// Emptying a note and closing still deletes it.
+    func testClosingAnEmptiedNoteDeletesIt() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let notes = seeded(state)
+        let editor = makeEditor(state)
+        let b = open(notes[1], in: editor, state: state)
+        editor.editorAttributedText = NSAttributedString(string: "  ")
+
+        editor.persistCurrentEditorContentIfChanged()
+        XCTAssertNil(state.note(for: b.context))
+    }
+
+    /// A new drawer put on To-Do before anything was stored is saved on
+    /// close, on To-Do, at the bottom of the list.
+    func testClosingANewDrawerAddedToToDoAppendsIt() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        _ = seeded(state)
+        let editor = makeEditor(state)
+        let fresh = note("fresh", pinned: false)
+        editor.activeContext = fresh.context
+        editor.loadEditorState(for: fresh.context)
+        editor.isActiveNotePinned = true
+        editor.editorAttributedText = NSAttributedString(string: "fresh body")
+
+        XCTAssertTrue(editor.persistCurrentEditorContentIfChanged())
+        let stored = try XCTUnwrap(state.note(for: fresh.context))
+        XCTAssertTrue(stored.isPinned)
+        XCTAssertEqual(state.todoOrder.last, stored.id)
+    }
+
     /// An empty new drawer has nothing stored: there's nothing to tick or
     /// restore, and nothing gets created.
     func testAnEmptyNewDrawerHasNoStoredNote() throws {

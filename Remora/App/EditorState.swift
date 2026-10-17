@@ -124,6 +124,13 @@ final class EditorState {
         isActiveNotePinned = stored.isPinned
     }
 
+    /// True while the drawer is on the stored note `noteID`, or, for nil,
+    /// on a context with nothing stored yet.
+    func isShowingStoredNote(_ noteID: UUID?) -> Bool {
+        guard let context = activeContext else { return false }
+        return notesState.note(for: context)?.id == noteID
+    }
+
     /// The open note as stored, after saving any typing first, for the
     /// footer's to-do control. Typing is a real edit, so that save writes
     /// a new date; a flag change on its own never does. Nil when nothing
@@ -174,6 +181,17 @@ final class EditorState {
         }
 
         return true
+    }
+
+    /// The drawer is closing or moving to another note: save only when
+    /// something in it changed (typing, a title, an emptied note to
+    /// delete, or a drawer with nothing stored yet). An untouched note
+    /// keeps its date, so opening and closing it, or ticking it in the
+    /// footer, never moves it up the grid.
+    @discardableResult
+    func persistCurrentEditorContentIfChanged(deleteIfEmpty: Bool = true) -> Bool {
+        guard hasUnpersistedChanges() else { return false }
+        return persistCurrentEditorContent(deleteIfEmpty: deleteIfEmpty)
     }
 
     // MARK: - Autosave
@@ -435,7 +453,7 @@ final class EditorState {
         // the user into a context that would start a new one.
         guard canCreateNote(context) else { return }
 
-        persistCurrentEditorContent()
+        persistCurrentEditorContentIfChanged()
         activeContext = context
         loadEditorState(for: context)
 
