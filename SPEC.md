@@ -33,7 +33,7 @@ To-Do in All Notes becomes a list you work through. A to-do is a flag on a note:
 
 ### Undo
 12. After any tick, a "Completed · Undo" bar appears in All Notes for about 5 seconds. Clicking Undo puts the note back on To-Do **in the position it had** and restores its circle in the grid.
-13. While that bar is showing, ⌘Z in All Notes does the same as clicking Undo.
+13. While that bar is showing, ⌘Z in All Notes does the same as clicking Undo, except while the search field has the caret: there ⌘Z undoes typing. A tick from the editor footer shows its undo only in the footer (14), so All Notes' bar and ⌘Z don't offer it.
 14. Ticking from the editor footer shows "Completed · Undo" in the footer for about 5 seconds, with the same effect.
 15. Starting another tick while the bar is showing replaces the bar; Undo then restores only the most recent tick (or the most recent batch, see 17).
 16. After the bar is gone, adding the note to To-Do again puts it at the bottom of the list.
@@ -64,3 +64,9 @@ To-Do in All Notes becomes a list you work through. A to-do is a flag on a note:
 ## Assumptions (confirmed at sign-off)
 - While searching, the To-Do list is hidden (criterion 18).
 - The undo bar's ~5 seconds is a target, not exact; 4–6s passes.
+
+## Decisions made in review
+- **Closing or switching the drawer saves only if the note was edited.** Opening a note and closing it untouched, or ticking it in the footer and pressing Escape, leaves its date alone, so its tile keeps its place in the grid (C6). Typing, a new title or an emptied note still save (or delete) as before.
+- **⌘Z in the search field keeps text undo.** The tick's ⌘Z applies only while the search field doesn't have the caret; the bar's Undo button always works (C13).
+- **Footer ticks show their undo only in the footer.** The All Notes bar, and ⌘Z there, cover ticks made in All Notes (rows, tiles, the multi-select bar, ⌘Return) only (C13, C14).
+- **The multi-select button shows its action.** `checkmark.circle` when every selected note is on To-Do (it completes them), `circle.badge.plus` otherwise (C1, C17).
