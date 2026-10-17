@@ -48,9 +48,11 @@ final class TodoListUITests: XCTestCase {
     // MARK: Seed
 
     /// Three pinned notes in a stored order (Alpha, Bravo, Charlie) that
-    /// is the reverse of their recency, plus one unpinned note.
-    private func seedStore() throws {
-        func note(id: String, title: String, hour: Int, pinned: Bool) -> String {
+    /// is the reverse of their recency, plus one unpinned note. No tags by
+    /// default: with tags, the search field offers them on focus and ↓
+    /// walks the suggestions instead of the list.
+    private func seedStore(bravoBody: String = "Bravo first line") throws {
+        func note(id: String, title: String, hour: Int, pinned: Bool, body: String? = nil) -> String {
             """
             {
               "id": "\(id)",
@@ -59,7 +61,7 @@ final class TodoListUITests: XCTestCase {
                 "identifier": "com.example.\(title.lowercased())",
                 "displayName": "Example App"
               },
-              "body": "\(title) first line",
+              "body": "\(body ?? "\(title) first line")",
               "createdAt": "2026-09-29T10:00:00Z",
               "updatedAt": "2026-09-29T1\(hour):00:00Z",
               "isPinned": \(pinned),
@@ -73,7 +75,7 @@ final class TodoListUITests: XCTestCase {
           "todoOrder": ["\(ids[0])", "\(ids[1])", "\(ids[2])"],
           "notes": [
             \(note(id: ids[0], title: "Alpha", hour: 1, pinned: true)),
-            \(note(id: ids[1], title: "Bravo", hour: 2, pinned: true)),
+            \(note(id: ids[1], title: "Bravo", hour: 2, pinned: true, body: bravoBody)),
             \(note(id: ids[2], title: "Charlie", hour: 3, pinned: true)),
             \(note(id: "DDDDDDDD-4444-4444-4444-444444444444", title: "Delta", hour: 4, pinned: false))
           ]
@@ -147,6 +149,48 @@ final class TodoListUITests: XCTestCase {
 
     private func button(_ label: String) -> XCUIElement {
         app.buttons.matching(NSPredicate(format: "label == %@", label)).firstMatch
+    }
+
+    private func storedNote(_ id: String) throws -> [String: Any] {
+        let data = try Data(contentsOf: storeDirectory.appending(path: "notes.json"))
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let notes = try XCTUnwrap(json["notes"] as? [[String: Any]])
+        return try XCTUnwrap(notes.first { ($0["id"] as? String) == id })
+    }
+
+    // MARK: The drawer
+
+    private var editorTextView: XCUIElement {
+        app.textViews["noteEditorTextView"].firstMatch
+    }
+
+    private var titleField: XCUIElement {
+        app.textFields["noteTitleField"].firstMatch
+    }
+
+    /// Waits for the drawer to open on the note titled `title`.
+    private func waitForEditor(on title: String, timeout: TimeInterval = 8) -> Bool {
+        guard editorTextView.waitForExistence(timeout: timeout) else { return false }
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if (titleField.value as? String) == title { return true }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.15))
+        }
+        return (titleField.value as? String) == title
+    }
+
+    private func closeEditor() {
+        editorTextView.click()
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(editorTextView.waitForNonExistence(timeout: 5), "Escape should close the drawer")
+        // Saves are debounced; the close flushes, but give it a moment.
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+    }
+
+    private func relaunch() {
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts["All Notes"].waitForExistence(timeout: 8), "All Notes did not reopen")
     }
 
     private func storedOrder() throws -> [String] {
@@ -250,6 +294,8 @@ final class TodoListUITests: XCTestCase {
         XCTAssertTrue(header(count: 2).waitForExistence(timeout: 3))
         XCTAssertTrue(tile("Bravo").exists, "Bravo stays a tile")
         XCTAssertFalse(completeButton("Bravo").exists, "and loses its circle")
+        // The menu item and VoiceOver's Complete call the same closure.
+        XCTAssertTrue(undoBar.waitForExistence(timeout: 3), "Complete offers Undo like the circle")
     }
 
     // MARK: Row circle
@@ -458,5 +504,120 @@ final class TodoListUITests: XCTestCase {
         // Focus moved on to Bravo; Space still selects.
         app.typeKey(" ", modifierFlags: [])
         XCTAssertTrue(app.staticTexts["1 selected"].waitForExistence(timeout: 3), "Space should select the focused row")
+    }
+
+    // MARK: Opening notes
+
+    func testReturnStillOpensFocusedRow() throws {
+        XCTAssertTrue(row("Alpha").waitForExistence(timeout: 5))
+        let field = searchField
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.click()
+        app.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.return, modifierFlags: [])
+
+        XCTAssertTrue(waitForEditor(on: "Alpha"), "Return should open Alpha; title=\(String(describing: titleField.value))")
+        XCTAssertEqual(try storedOrder(), [ids[0], ids[1], ids[2]], "Return must not tick")
+    }
+
+    func testClickingARowOpensTheNote() throws {
+        XCTAssertTrue(row("Bravo").waitForExistence(timeout: 5))
+        row("Bravo").click()
+        XCTAssertTrue(waitForEditor(on: "Bravo"), "a click on the row should open Bravo; title=\(String(describing: titleField.value))")
+    }
+
+    /// A footer tick, then Escape: the tick sticks and the tile stays
+    /// where it was (C6). Closing an untouched note doesn't move it.
+    func testFooterTickThenEscapeKeepsTheTilesPlace() throws {
+        XCTAssertTrue(row("Bravo").waitForExistence(timeout: 5))
+        // The seed has no rich text; one open and close gives Bravo the
+        // editor's own, as every note saved from the drawer has.
+        row("Bravo").click()
+        XCTAssertTrue(waitForEditor(on: "Bravo"))
+        closeEditor()
+        relaunch()
+
+        XCTAssertTrue(row("Bravo").waitForExistence(timeout: 5))
+        let indexBefore = try XCTUnwrap(tileIndex("Bravo"))
+        let dateBefore = try storedNote(ids[1])["updatedAt"] as? String
+
+        // Opening and closing again, untouched, keeps the date.
+        row("Bravo").click()
+        XCTAssertTrue(waitForEditor(on: "Bravo"))
+        closeEditor()
+        XCTAssertEqual(try storedNote(ids[1])["updatedAt"] as? String, dateBefore, "an untouched note keeps its date")
+        relaunch()
+
+        XCTAssertTrue(row("Bravo").waitForExistence(timeout: 5))
+        row("Bravo").click()
+        XCTAssertTrue(waitForEditor(on: "Bravo"))
+        let todo = app.descendants(matching: .any).matching(identifier: "editorTodoButton").firstMatch
+        XCTAssertTrue(todo.waitForExistence(timeout: 3))
+        XCTAssertEqual(todo.label, "Complete \u{201C}Bravo\u{201D}")
+        todo.click()
+        expectation(for: NSPredicate(format: "label == %@", "Add to To-Do"), evaluatedWith: todo)
+        waitForExpectations(timeout: 3)
+        closeEditor()
+
+        let stored = try storedNote(ids[1])
+        XCTAssertEqual(stored["isPinned"] as? Bool, false, "the tick should stick")
+        XCTAssertEqual(stored["updatedAt"] as? String, dateBefore, "a tick isn't an edit")
+        relaunch()
+        XCTAssertTrue(waitForRowTitles(["Alpha", "Charlie"]), "got \(rowTitles)")
+        XCTAssertEqual(tileIndex("Bravo"), indexBefore, "the tile keeps its place")
+    }
+
+    // MARK: Search
+
+    func testTagSearchHidesToDoAndKeepsCircle() throws {
+        app.terminate()
+        try seedStore(bravoBody: "Bravo first line #errand")
+        app.launch()
+        XCTAssertTrue(row("Bravo").waitForExistence(timeout: 8))
+        let field = searchField
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.click()
+        field.typeText("#errand")
+
+        XCTAssertTrue(todoList.waitForNonExistence(timeout: 3), "a tag search hides the To-Do list")
+        XCTAssertTrue(tile("Bravo").waitForExistence(timeout: 3), "the tagged to-do is found as a tile")
+        XCTAssertTrue(tile("Alpha").waitForNonExistence(timeout: 3), "untagged notes drop out")
+        XCTAssertTrue(tile("Bravo").buttons["Complete \u{201C}Bravo\u{201D}"].exists, "the tile keeps its circle")
+    }
+
+    /// ⌘Z while typing in search undoes the typing, not the tick; the
+    /// bar's Undo still takes the tick back.
+    func testCommandZInSearchUndoesTypingNotTheTick() throws {
+        XCTAssertTrue(row("Alpha").waitForExistence(timeout: 5))
+        tickRow("Alpha", leaving: ["Bravo", "Charlie"])
+        XCTAssertTrue(undoBar.waitForExistence(timeout: 3))
+
+        let field = searchField
+        field.click()
+        field.typeText("xy")
+        app.typeKey("z", modifierFlags: .command)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.3))
+
+        let value = (field.value as? String) ?? ""
+        XCTAssertTrue(value == "x" || value.isEmpty, "⌘Z should undo typing; field reads \(value.debugDescription)")
+        XCTAssertTrue(undoBar.exists, "⌘Z in the search field must leave the tick's undo alone")
+        XCTAssertEqual(try storedOrder(), [ids[1], ids[2]], "Alpha is still ticked")
+
+        undoBar.buttons["Undo"].click()
+        XCTAssertTrue(undoBar.waitForNonExistence(timeout: 3))
+        field.typeKey("a", modifierFlags: .command)
+        field.typeKey(.delete, modifierFlags: [])
+        XCTAssertTrue(waitForRowTitles(["Alpha", "Bravo", "Charlie"]), "got \(rowTitles)")
+    }
+
+    // MARK: Tiles
+
+    func testToDoCircleVisibleWithoutHover() throws {
+        XCTAssertTrue(row("Alpha").waitForExistence(timeout: 5))
+        app.staticTexts["All Notes"].hover()
+
+        let circle = tile("Alpha").buttons["Complete \u{201C}Alpha\u{201D}"]
+        XCTAssertTrue(circle.waitForExistence(timeout: 3), "the to-do tile's circle should be there without hovering")
+        XCTAssertTrue(circle.isHittable, "and hittable")
     }
 }
