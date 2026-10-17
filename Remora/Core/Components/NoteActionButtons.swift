@@ -96,7 +96,10 @@ struct TodoCheckCircle: View {
         if let complete {
             complete()
         } else {
-            appState.completeTodo([note.id], origin: origin)
+            // The row it also has in the To-Do list fades out.
+            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) {
+                appState.completeTodo([note.id], origin: origin)
+            }
         }
     }
 }

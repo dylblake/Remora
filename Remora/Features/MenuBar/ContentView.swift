@@ -321,6 +321,7 @@ private struct TodoListSection: View {
                         canMoveUp: index > 0,
                         canMoveDown: index < notes.count - 1,
                         onMove: { delta in move(note, by: delta, in: notes) },
+                        onComplete: { complete(note) },
                         reorderGesture: reorderGesture(for: note, at: index, in: notes)
                     )
                     .environment(appState)
@@ -330,6 +331,9 @@ private struct TodoListSection: View {
                     // The dragged row tracks the pointer exactly; the rows
                     // it passes ease out of its way.
                     .animation(isDragged ? nil : settle, value: targetIndex(count: notes.count))
+                    // A ticked row fades while the rows below close the
+                    // gap; with Reduce Motion it just goes. Never a slide.
+                    .transition(.opacity)
                     .id(ListFocus(sectionID: section.id, noteID: note.id))
                 }
             }
@@ -414,6 +418,21 @@ private struct TodoListSection: View {
             }
     }
 
+    // MARK: Ticking
+
+    /// The circle, the context menu and VoiceOver's Complete. A focused
+    /// row hands keyboard focus on before it goes.
+    private func complete(_ note: ContextNote) {
+        let notesState = appState.notesState
+        let row = ListFocus(sectionID: section.id, noteID: note.id)
+        if notesState.keyboardFocus == row {
+            notesState.keyboardFocus = NoteSectionBuilder.focusAfterTicking(row, in: notesState.noteSections)
+        }
+        withAnimation(settle) {
+            appState.completeTodo([note.id], origin: .allNotes)
+        }
+    }
+
     /// VoiceOver's Move Up / Move Down.
     private func move(_ note: ContextNote, by delta: Int, in notes: [ContextNote]) {
         var ids = notes.map(\.id)
@@ -425,8 +444,8 @@ private struct TodoListSection: View {
     }
 }
 
-/// One To-Do line: where the note lives, its title, and a faint first
-/// line.
+/// One To-Do line: the circle that ticks it off, where the note lives,
+/// its title, and a faint first line.
 private struct TodoRow<ReorderGesture: Gesture>: View {
     @Environment(AppState.self) private var appState
 
@@ -436,6 +455,7 @@ private struct TodoRow<ReorderGesture: Gesture>: View {
     let canMoveUp: Bool
     let canMoveDown: Bool
     let onMove: (Int) -> Void
+    let onComplete: () -> Void
     let reorderGesture: ReorderGesture
 
     @State private var isHovered = false
@@ -447,6 +467,12 @@ private struct TodoRow<ReorderGesture: Gesture>: View {
         let preview = NoteCardStyle.firstLinePreview(for: note)
 
         HStack(spacing: 0) {
+            // A sibling of the gesture view, never inside it: a click on
+            // the circle must not open the note or start a drag.
+            TodoCheckCircle(note: note, title: title, complete: onComplete)
+                .environment(appState)
+                .padding(.leading, Spacing.xxs)
+
             HStack(spacing: Spacing.xs) {
                 NoteContextIcon(context: note.context, size: 18)
 
@@ -467,7 +493,8 @@ private struct TodoRow<ReorderGesture: Gesture>: View {
 
                 Spacer(minLength: 0)
             }
-            .padding(.leading, Spacing.xs)
+            .padding(.leading, Spacing.xxs)
+            .padding(.trailing, Spacing.xs)
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
             .gesture(reorderGesture)
@@ -476,6 +503,7 @@ private struct TodoRow<ReorderGesture: Gesture>: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { appState.open(note) }
             .accessibilityActions {
+                Button("Complete") { onComplete() }
                 if canMoveUp { Button("Move Up") { onMove(-1) } }
                 if canMoveDown { Button("Move Down") { onMove(1) } }
             }
@@ -486,7 +514,7 @@ private struct TodoRow<ReorderGesture: Gesture>: View {
         .onHover { isHovered = $0 }
         .contextMenu {
             Button("Open") { appState.open(note) }
-            Button("Remove from To-Do") { appState.completeTodo([note.id], origin: .allNotes) }
+            Button("Complete") { onComplete() }
         }
     }
 

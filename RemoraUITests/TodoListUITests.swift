@@ -204,17 +204,38 @@ final class TodoListUITests: XCTestCase {
         XCTAssertEqual(try storedOrder(), [ids[1], ids[2], ids[0]])
     }
 
-    func testRemovingFromToDoMovesTheNoteBackToTheTiles() throws {
+    func testContextMenuCompleteTicks() throws {
         XCTAssertTrue(row("Bravo").waitForExistence(timeout: 5))
 
         row("Bravo").rightClick()
-        let remove = app.menuItems["Remove from To-Do"]
-        XCTAssertTrue(remove.waitForExistence(timeout: 3))
-        remove.click()
+        let complete = app.menuItems["Complete"]
+        XCTAssertTrue(complete.waitForExistence(timeout: 3))
+        complete.click()
 
         XCTAssertTrue(waitForRowTitles(["Alpha", "Charlie"]), "got \(rowTitles)")
         XCTAssertTrue(header(count: 2).waitForExistence(timeout: 3))
-        XCTAssertTrue(app.staticTexts["Bravo"].firstMatch.waitForExistence(timeout: 3), "Bravo should be a tile now")
+        XCTAssertTrue(tile("Bravo").exists, "Bravo stays a tile")
+        XCTAssertFalse(completeButton("Bravo").exists, "and loses its circle")
+    }
+
+    // MARK: Row circle
+
+    private var todoList: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "todoList").firstMatch
+    }
+
+    func testRowCircleTicksWithCheckmarkThenLeaves() throws {
+        XCTAssertTrue(row("Bravo").waitForExistence(timeout: 5))
+
+        let circle = todoList.buttons["Complete \u{201C}Bravo\u{201D}"]
+        XCTAssertTrue(circle.waitForExistence(timeout: 3), "each row should lead with its circle")
+        XCTAssertLessThan(circle.frame.midX, row("Bravo").frame.minX, "the circle sits before the row's title")
+        circle.click()
+
+        XCTAssertTrue(waitForRowTitles(["Alpha", "Charlie"]), "got \(rowTitles)")
+        XCTAssertTrue(header(count: 2).waitForExistence(timeout: 3))
+        XCTAssertTrue(app.staticTexts["All Notes"].exists, "clicking the circle must not open the note")
+        XCTAssertTrue(tile("Bravo").exists, "the tile stays")
     }
 
     // MARK: Tiles and the multi-select bar

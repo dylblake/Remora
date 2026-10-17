@@ -99,6 +99,27 @@ final class TodoOrderTests: XCTestCase {
         XCTAssertEqual(Set(stops).count, stops.count)
     }
 
+    /// Ticking the focused row hands focus to the next row, then the
+    /// previous one, then the first tile.
+    func testFocusAfterTickingARowMovesToTheNextRowThenThePreviousThenTheFirstTile() {
+        let a = note("a", pinned: true, updated: 1)
+        let b = note("b", pinned: true, updated: 2)
+        let c = note("c", pinned: false, updated: 3)
+        let row = { (n: ContextNote) in ListFocus(sectionID: NoteSectionBuilder.todoSectionID, noteID: n.id) }
+        let tile = { (n: ContextNote) in ListFocus(sectionID: NoteSectionBuilder.notesSectionID, noteID: n.id) }
+        let sections = NoteSectionBuilder.build(from: [c, b, a], todoOrder: [a.id, b.id])
+
+        XCTAssertEqual(NoteSectionBuilder.focusAfterTicking(row(a), in: sections), row(b))
+        XCTAssertEqual(NoteSectionBuilder.focusAfterTicking(row(b), in: sections), row(a))
+
+        let lone = NoteSectionBuilder.build(from: [c, a], todoOrder: [a.id])
+        XCTAssertEqual(NoteSectionBuilder.focusAfterTicking(row(a), in: lone), tile(c))
+
+        let nothingElse = NoteSectionBuilder.build(from: [a], todoOrder: [a.id])
+        XCTAssertEqual(NoteSectionBuilder.focusAfterTicking(row(a), in: nothingElse), tile(a),
+                       "the ticked note's own tile stays, so it takes focus")
+    }
+
     func testSearchHidesTheToDoSectionAndClearingBringsItBack() throws {
         let (state, directory) = try makeState()
         defer { try? FileManager.default.removeItem(at: directory) }
