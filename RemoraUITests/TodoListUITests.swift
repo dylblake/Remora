@@ -407,4 +407,25 @@ final class TodoListUITests: XCTestCase {
         add.click()
         XCTAssertTrue(waitForRowTitles(["Bravo", "Charlie", "Alpha"]), "got \(rowTitles)")
     }
+
+    // MARK: Keyboard
+
+    func testCommandReturnTicksFocusedRow() throws {
+        XCTAssertTrue(row("Alpha").waitForExistence(timeout: 5))
+
+        let field = searchField
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.click()
+        // Down from the field focuses the first stop: Alpha's row.
+        app.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.return, modifierFlags: .command)
+
+        XCTAssertTrue(waitForRowTitles(["Bravo", "Charlie"]), "got \(rowTitles)")
+        XCTAssertTrue(undoBar.waitForExistence(timeout: 3), "⌘Return ticks with Undo like a click")
+        XCTAssertTrue(app.staticTexts["All Notes"].exists, "⌘Return must not open the note")
+
+        // Focus moved on to Bravo; Space still selects.
+        app.typeKey(" ", modifierFlags: [])
+        XCTAssertTrue(app.staticTexts["1 selected"].waitForExistence(timeout: 3), "Space should select the focused row")
+    }
 }

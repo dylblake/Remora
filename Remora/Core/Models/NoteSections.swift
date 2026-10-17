@@ -58,6 +58,13 @@ enum NoteSectionBuilder {
             .map { ListFocus(sectionID: notesSectionID, noteID: $0.id) }
     }
 
+    /// The note ⌘Return should tick: the focused To-Do row's, unless the
+    /// search field has the caret. A focused tile isn't ticked this way.
+    static func rowToTick(focus: ListFocus?, isSearchFieldFocused: Bool) -> UUID? {
+        guard !isSearchFieldFocused, let focus, focus.sectionID == todoSectionID else { return nil }
+        return focus.noteID
+    }
+
     /// Pinned notes in the user's manual order. A note missing from
     /// `order` sorts after the ordered ones, most recently updated first.
     private static func todoSection(notes: [ContextNote], order: [UUID]) -> NoteSection {

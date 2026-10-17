@@ -120,6 +120,19 @@ final class TodoOrderTests: XCTestCase {
                        "the ticked note's own tile stays, so it takes focus")
     }
 
+    /// ⌘Return ticks a focused row, and nothing else: not a tile, not
+    /// while the search field has the caret.
+    func testCommandReturnTicksOnlyAFocusedRow() {
+        let id = UUID()
+        let row = ListFocus(sectionID: NoteSectionBuilder.todoSectionID, noteID: id)
+        let tile = ListFocus(sectionID: NoteSectionBuilder.notesSectionID, noteID: id)
+
+        XCTAssertEqual(NoteSectionBuilder.rowToTick(focus: row, isSearchFieldFocused: false), id)
+        XCTAssertNil(NoteSectionBuilder.rowToTick(focus: row, isSearchFieldFocused: true))
+        XCTAssertNil(NoteSectionBuilder.rowToTick(focus: tile, isSearchFieldFocused: false))
+        XCTAssertNil(NoteSectionBuilder.rowToTick(focus: nil, isSearchFieldFocused: false))
+    }
+
     func testSearchHidesTheToDoSectionAndClearingBringsItBack() throws {
         let (state, directory) = try makeState()
         defer { try? FileManager.default.removeItem(at: directory) }

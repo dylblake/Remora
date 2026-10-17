@@ -44,16 +44,31 @@ struct TodoAddButton: View {
     }
 }
 
+/// Asks a To-Do row's circle to tick, as if clicked: ⌘Return on the
+/// focused row. The token tells two requests for the same note apart.
+struct TodoTickRequest: Equatable {
+    let noteID: UUID
+    let token = UUID()
+}
+
+extension EnvironmentValues {
+    /// The latest ⌘Return request; circles that answer it watch this.
+    @Entry var todoTickRequest: TodoTickRequest?
+}
+
 /// The empty circle on a to-do. A click shows the checkmark for a moment,
 /// then ticks the note off (with "Completed · Undo"). VoiceOver's action
 /// ticks straight away.
 struct TodoCheckCircle: View {
     @Environment(AppState.self) private var appState
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.todoTickRequest) private var tickRequest
     let note: ContextNote
     /// The note's title as the caller shows it, for VoiceOver.
     let title: String
     var origin: TodoCompletionOrigin = .allNotes
+    /// True for a row's circle: ⌘Return ticks rows, not tiles.
+    var answersTickRequests = false
     /// What ticking does, in place of the plain `completeTodo`: the row
     /// wraps it in its removal animation and moves keyboard focus.
     var complete: (() -> Void)?
@@ -78,6 +93,10 @@ struct TodoCheckCircle: View {
             guard !isTicking else { return }
             isTicking = true
             commit()
+        }
+        .onChange(of: tickRequest) { _, request in
+            guard answersTickRequests, request?.noteID == note.id else { return }
+            tick()
         }
     }
 

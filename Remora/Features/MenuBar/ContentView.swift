@@ -16,6 +16,9 @@ struct ContentView: View {
     /// suggestions, typing) must win over the list shortcuts below.
     @State private var isSearchFieldFocused = false
     @FocusState private var isListFocused: Bool
+    /// ⌘Return's latest request, handed to the To-Do rows' circles so the
+    /// tick shows its checkmark like a click.
+    @State private var tickRequest: TodoTickRequest?
     var body: some View {
         @Bindable var notes = appState.notesState
         let content = ScrollViewReader { proxy in
@@ -84,6 +87,7 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, Spacing.lg)
                         .padding(.bottom, Spacing.lg)
+                        .environment(\.todoTickRequest, tickRequest)
                     }
                 }
             }
@@ -96,13 +100,20 @@ struct ContentView: View {
             .onKeyPress(.upArrow) { unlessSearching { moveKeyboardFocus(by: -1, proxy: proxy) } }
             .onKeyPress(.rightArrow) { unlessSearching { moveKeyboardFocus(by: 1, proxy: proxy) } }
             .onKeyPress(.leftArrow) { unlessSearching { moveKeyboardFocus(by: -1, proxy: proxy) } }
-            .onKeyPress(.return) { unlessSearching { openKeyboardFocusedNote() } }
-            .onKeyPress(.space) { unlessSearching { toggleKeyboardFocusedSelection() } }
+            // ⌘Return belongs to the hidden shortcut below, not to these.
+            .onKeyPress(.return, phases: [.down, .repeat]) { press in
+                press.modifiers.contains(.command) ? .ignored : unlessSearching { openKeyboardFocusedNote() }
+            }
+            .onKeyPress(.space, phases: [.down, .repeat]) { press in
+                press.modifiers.contains(.command) ? .ignored : unlessSearching { toggleKeyboardFocusedSelection() }
+            }
             .onKeyPress(.delete) { unlessSearching { confirmDeleteKeyboardFocusedNote() } }
             .onKeyPress(.deleteForward) { unlessSearching { confirmDeleteKeyboardFocusedNote() } }
             .background {
                 // Hidden ⌘F target: moves focus into the search field.
                 hiddenShortcut("f") { searchFocusRequestID = UUID() }
+                // ⌘Return ticks the focused To-Do row.
+                hiddenShortcut(.return) { tickKeyboardFocusedRow() }
                 // ⌘Z exists only while a tick can be undone, so it never
                 // swallows the key otherwise.
                 if appState.todoUndo.pending != nil {
@@ -136,6 +147,14 @@ struct ContentView: View {
             .opacity(0)
             .frame(width: 0, height: 0)
             .accessibilityHidden(true)
+    }
+
+    private func tickKeyboardFocusedRow() {
+        guard let noteID = NoteSectionBuilder.rowToTick(
+            focus: appState.notesState.keyboardFocus,
+            isSearchFieldFocused: isSearchFieldFocused
+        ) else { return }
+        tickRequest = TodoTickRequest(noteID: noteID)
     }
 
     private func undoLastCompletion() {
@@ -522,7 +541,7 @@ private struct TodoRow<ReorderGesture: Gesture>: View {
         HStack(spacing: 0) {
             // A sibling of the gesture view, never inside it: a click on
             // the circle must not open the note or start a drag.
-            TodoCheckCircle(note: note, title: title, complete: onComplete)
+            TodoCheckCircle(note: note, title: title, answersTickRequests: true, complete: onComplete)
                 .environment(appState)
                 .padding(.leading, Spacing.xxs)
 
