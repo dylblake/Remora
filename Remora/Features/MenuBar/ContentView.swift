@@ -722,9 +722,10 @@ private struct NoteTile: View {
 
     private var actions: some View {
         HStack(spacing: 0) {
-            NoteDeleteButton(note: note)
+            // Hover-only actions fade their icon, not the button, so
+            // VoiceOver still finds them on a tile the pointer isn't over.
+            NoteDeleteButton(note: note, isRevealed: showsActions)
                 .environment(appState)
-                .opacity(showsActions ? 1 : 0)
 
             // A to-do's circle is always there; "Add to To-Do" waits for
             // the pointer like the other actions.
@@ -732,9 +733,8 @@ private struct NoteTile: View {
                 TodoCheckCircle(noteID: note.id, title: NoteCardStyle.primaryTitle(for: note))
                     .environment(appState)
             } else {
-                TodoAddButton(note: note)
+                TodoAddButton(note: note, isRevealed: showsActions)
                     .environment(appState)
-                    .opacity(showsActions ? 1 : 0)
             }
 
             // Trailing, so it stays put when it is the only one showing.

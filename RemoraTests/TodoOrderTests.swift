@@ -355,5 +355,25 @@ final class TodoOrderTests: XCTestCase {
 
         let state = NotesState(store: NoteStore(directoryOverride: directory))
         XCTAssertEqual(todoTitles(state), ["new", "old"])
+        // Pinned notes from before To-Do could be ticked are also tiles.
+        let grid = state.noteSections.first { $0.id == NoteSectionBuilder.notesSectionID }
+        XCTAssertEqual(grid?.notes.compactMap(\.title), ["new", "old"])
+    }
+
+    /// A note ticked before quitting stays off To-Do after relaunch; the
+    /// rest keep their order and every note is still there.
+    func testCompletionPersistsAcrossReload() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let notes = ["a", "b", "c"].map { note($0, pinned: true) }
+        notes.forEach(state.upsert)
+        XCTAssertNotNil(state.completeTodos([notes[1].id]))
+
+        state.flush()
+        let reloaded = NotesState(store: NoteStore(directoryOverride: directory))
+        XCTAssertEqual(todoTitles(reloaded), ["a", "c"])
+        XCTAssertEqual(reloaded.notes.count, 3)
+        XCTAssertEqual(reloaded.note(for: notes[1].context)?.isPinned, false)
     }
 }

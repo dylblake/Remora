@@ -207,6 +207,37 @@ final class TodoListUITests: XCTestCase {
         XCTAssertEqual(try storedOrder(), [ids[1], ids[2], ids[0]])
     }
 
+    /// Ticked before quitting, gone from To-Do after relaunch; the rest
+    /// keep their order and Bravo is still a tile.
+    func testTickSurvivesRelaunch() throws {
+        XCTAssertTrue(row("Bravo").waitForExistence(timeout: 5))
+        tickRow("Bravo", leaving: ["Alpha", "Charlie"])
+
+        // Saves are debounced.
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+        app.terminate()
+        app.launch()
+
+        XCTAssertTrue(row("Alpha").waitForExistence(timeout: 8), "All Notes did not reopen")
+        XCTAssertTrue(waitForRowTitles(["Alpha", "Charlie"]), "got \(rowTitles)")
+        XCTAssertTrue(tile("Bravo").exists, "Bravo is still a note")
+        XCTAssertEqual(try storedOrder(), [ids[0], ids[2]])
+    }
+
+    /// A tile's hover-only actions stay reachable for VoiceOver while
+    /// they're hidden from sight.
+    func testTileActionsAreReachableWithoutHovering() throws {
+        XCTAssertTrue(row("Alpha").waitForExistence(timeout: 5))
+        // Keep the pointer off every tile.
+        app.staticTexts["All Notes"].hover()
+
+        let delta = tile("Delta")
+        XCTAssertTrue(delta.waitForExistence(timeout: 3))
+        XCTAssertTrue(delta.buttons["Add to To-Do"].exists, "Add to To-Do should be in the accessibility tree\n\(delta.debugDescription)")
+        XCTAssertTrue(delta.buttons["Delete note"].exists, "Delete should be in the accessibility tree")
+        XCTAssertTrue(tile("Alpha").buttons["Delete note"].exists, "a to-do tile offers Delete too")
+    }
+
     func testContextMenuCompleteTicks() throws {
         XCTAssertTrue(row("Bravo").waitForExistence(timeout: 5))
 

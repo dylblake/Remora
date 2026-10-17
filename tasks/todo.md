@@ -12,6 +12,6 @@ Full detail, commands and the UI-test workflow are in `tasks/plan.md`. C-numbers
 - [x] **T7** ⌘Return ticks the focused To-Do row; Return/Space unchanged (C9). UI.
 - [ ] **Checkpoint B:** unit + TodoList/Search UI green via watchdog workflow; short manual scratch-store run.
 - [x] **T8** Editor footer: two states plus footer "Completed · Undo"; `editorTodoButton` (C8, C14, C6). UI + unit.
-- [ ] **T9** Relaunch/persistence tests, legacy pinned store, no-pin sweep, full suite (C4, C20, C21, C1).
+- [x] **T9** Relaunch/persistence tests, legacy pinned store, no-pin sweep, full suite (C4, C20, C21, C1). Tile actions reachable by VoiceOver without hover (C10). Open: `testDraggingARowReordersAndPersists` still fails (as on `main`); the CGEvent rewrite is blocked because the UI-test runner may not post events.
 - [ ] **T10** CHANGELOG `## Unreleased` entry and README feature line.
 - [ ] **Final checkpoint:** full suite green; every criterion mapped and checked.

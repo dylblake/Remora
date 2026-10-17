@@ -27,6 +27,9 @@ struct NoteSelectionCheckbox: View {
 struct TodoAddButton: View {
     @Environment(AppState.self) private var appState
     let note: ContextNote
+    /// False hides the icon until the pointer comes by. The button stays
+    /// in the accessibility tree, so VoiceOver can still reach it.
+    var isRevealed = true
 
     var body: some View {
         Button {
@@ -35,6 +38,7 @@ struct TodoAddButton: View {
             Image(systemName: "circle.badge.plus")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(RemoraTheme.secondaryText)
+                .opacity(isRevealed ? 1 : 0)
                 .frame(width: 26, height: 26)
                 .contentShape(Rectangle())
         }
@@ -165,6 +169,8 @@ struct NoteDeleteButton: View {
     @Environment(AppState.self) private var appState
     @State private var showingConfirmation = false
     let note: ContextNote
+    /// As for `TodoAddButton`: hidden from sight, not from VoiceOver.
+    var isRevealed = true
 
     var body: some View {
         Button(role: .destructive) {
@@ -173,6 +179,7 @@ struct NoteDeleteButton: View {
             Image(systemName: "trash")
                 .font(.system(size: 14, weight: .semibold))
                 .foregroundStyle(RemoraTheme.secondaryText)
+                .opacity(isRevealed ? 1 : 0)
                 .frame(width: 26, height: 26)
                 .contentShape(Rectangle())
         }
