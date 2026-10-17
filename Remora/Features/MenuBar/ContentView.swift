@@ -45,9 +45,9 @@ struct ContentView: View {
                     ),
                     onMoveDown: {
                         isListFocused = true
-                        if appState.notesState.keyboardFocusedNoteID == nil,
-                           let first = orderedVisibleNotes.first {
-                            appState.notesState.keyboardFocusedNoteID = first.id
+                        if appState.notesState.keyboardFocus == nil,
+                           let first = focusStops.first {
+                            appState.notesState.keyboardFocus = first
                         }
                     }
                 )
@@ -119,10 +119,11 @@ struct ContentView: View {
 
     // MARK: - Keyboard navigation
 
-    /// Notes in on-screen order (sections top to bottom, groups, then
-    /// notes) so arrow keys walk the list the way it reads.
-    private var orderedVisibleNotes: [ContextNote] {
-        appState.notesState.noteSections.flatMap(\.notes)
+    /// Keyboard stops in on-screen order (the To-Do rows, then every
+    /// tile) so arrow keys walk the list the way it reads. A to-do is a
+    /// stop in both places.
+    private var focusStops: [ListFocus] {
+        NoteSectionBuilder.focusOrder(appState.notesState.noteSections)
     }
 
     private var hasTodoNotes: Bool {
@@ -134,22 +135,22 @@ struct ContentView: View {
     }
 
     private func moveKeyboardFocus(by delta: Int, proxy: ScrollViewProxy) -> KeyPress.Result {
-        let notes = orderedVisibleNotes
-        guard !notes.isEmpty else { return .ignored }
+        let stops = focusStops
+        guard !stops.isEmpty else { return .ignored }
 
-        let currentIndex = appState.notesState.keyboardFocusedNoteID
-            .flatMap { id in notes.firstIndex(where: { $0.id == id }) }
+        let currentIndex = appState.notesState.keyboardFocus
+            .flatMap { focus in stops.firstIndex(of: focus) }
 
         let newIndex: Int
         if let currentIndex {
-            newIndex = max(0, min(notes.count - 1, currentIndex + delta))
+            newIndex = max(0, min(stops.count - 1, currentIndex + delta))
         } else {
-            newIndex = delta >= 0 ? 0 : notes.count - 1
+            newIndex = delta >= 0 ? 0 : stops.count - 1
         }
 
-        let target = notes[newIndex]
-        appState.notesState.keyboardFocusedNoteID = target.id
-        proxy.scrollTo(target.id, anchor: nil)
+        let target = stops[newIndex]
+        appState.notesState.keyboardFocus = target
+        proxy.scrollTo(target, anchor: nil)
         return .handled
     }
 
@@ -178,11 +179,12 @@ struct ContentView: View {
 
         if alert.runModal() == .alertFirstButtonReturn {
             // Move the highlight to a neighbor so keyboard flow continues.
-            let notes = orderedVisibleNotes
-            if let index = notes.firstIndex(where: { $0.id == note.id }) {
-                let neighbor = notes.indices.contains(index + 1) ? notes[index + 1]
-                    : (index > 0 ? notes[index - 1] : nil)
-                appState.notesState.keyboardFocusedNoteID = neighbor?.id
+            // The note's other stop (row or tile) goes with it.
+            let stops = focusStops
+            if let focus = appState.notesState.keyboardFocus, let index = stops.firstIndex(of: focus) {
+                let neighbor = stops[(index + 1)...].first { $0.noteID != note.id }
+                    ?? stops[..<index].last { $0.noteID != note.id }
+                appState.notesState.keyboardFocus = neighbor
             }
             appState.notesState.delete(note)
         }
@@ -190,8 +192,10 @@ struct ContentView: View {
     }
 
     private var keyboardFocusedNote: ContextNote? {
-        guard let id = appState.notesState.keyboardFocusedNoteID else { return nil }
-        return orderedVisibleNotes.first { $0.id == id }
+        guard let focus = appState.notesState.keyboardFocus else { return nil }
+        return appState.notesState.noteSections
+            .first { $0.id == focus.sectionID }?
+            .notes.first { $0.id == focus.noteID }
     }
 
     private var emptyStateView: some View {
@@ -321,7 +325,7 @@ private struct TodoListSection: View {
                     // The dragged row tracks the pointer exactly; the rows
                     // it passes ease out of its way.
                     .animation(isDragged ? nil : settle, value: targetIndex(count: notes.count))
-                    .id(note.id)
+                    .id(ListFocus(sectionID: section.id, noteID: note.id))
                 }
             }
             .padding(Spacing.xxs)
@@ -487,7 +491,7 @@ private struct TodoRow<ReorderGesture: Gesture>: View {
     }
 
     private var isKeyboardFocused: Bool {
-        appState.notesState.keyboardFocusedNoteID == note.id
+        appState.notesState.keyboardFocus == ListFocus(sectionID: NoteSectionBuilder.todoSectionID, noteID: note.id)
     }
 
     private var isSelected: Bool {
@@ -536,7 +540,7 @@ private struct CountedSectionHeading: View {
     }
 }
 
-/// Every unpinned note in one grid, newest first. Nothing is grouped: the
+/// Every note in one grid, to-dos included, newest first. Nothing is grouped: the
 /// icon and source line on each tile say where a note lives, so tiles
 /// from different places share rows and fill the pane's width.
 private struct NoteGridSection: View {
@@ -560,7 +564,7 @@ private struct NoteGridSection: View {
                 ForEach(section.notes) { note in
                     NoteTile(note: note)
                         .environment(appState)
-                        .id(note.id)
+                        .id(ListFocus(sectionID: section.id, noteID: note.id))
                 }
             }
             .accessibilityElement(children: .contain)
@@ -689,7 +693,7 @@ private struct NoteTile: View {
     }
 
     private var isKeyboardFocused: Bool {
-        appState.notesState.keyboardFocusedNoteID == note.id
+        appState.notesState.keyboardFocus == ListFocus(sectionID: NoteSectionBuilder.notesSectionID, noteID: note.id)
     }
 
     /// Neutral on purpose: the icon carries the note's identity, and the

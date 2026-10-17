@@ -57,9 +57,9 @@ final class NotesState {
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     var selectedNoteIDs: Set<UUID> = []
     var allNotesScrollResetID = UUID()
-    /// Row highlighted by keyboard navigation in All Notes (distinct from
-    /// the checkbox multi-selection).
-    var keyboardFocusedNoteID: UUID?
+    /// Row or tile highlighted by keyboard navigation in All Notes
+    /// (distinct from the checkbox multi-selection).
+    var keyboardFocus: ListFocus?
 
     /// Notes ever created, for the free-trial gate. Monotonic: deleting
     /// notes doesn't refund trial slots.
@@ -201,7 +201,7 @@ final class NotesState {
         // then rewritten with each one back in its slot.
         notes = notes.map { restored.contains($0.id) ? $0.copying(isPinned: true) : $0 }
         todoOrder = Self.restoringOrder(todoOrder.filter { !restored.contains($0) }, inserting: entries)
-        noteSections = NoteSectionBuilder.build(from: filteredNotes, todoOrder: todoOrder)
+        noteSections = NoteSectionBuilder.build(from: filteredNotes, todoOrder: todoOrder, includesTodo: searchText.isEmpty)
         save()
     }
 
@@ -217,7 +217,7 @@ final class NotesState {
         guard reordered != todoOrder else { return }
 
         todoOrder = reordered
-        noteSections = NoteSectionBuilder.build(from: filteredNotes, todoOrder: todoOrder)
+        noteSections = NoteSectionBuilder.build(from: filteredNotes, todoOrder: todoOrder, includesTodo: searchText.isEmpty)
         save()
     }
 
@@ -260,7 +260,7 @@ final class NotesState {
         searchTask?.cancel()
         recentNotes = Array(_sortedNotes.prefix(5))
         filteredNotes = Self.filter(notes: _sortedNotes, query: searchText)
-        noteSections = NoteSectionBuilder.build(from: filteredNotes, todoOrder: todoOrder)
+        noteSections = NoteSectionBuilder.build(from: filteredNotes, todoOrder: todoOrder, includesTodo: searchText.isEmpty)
     }
 
     /// Typing path: debounced, with matching and section building off the
@@ -284,7 +284,7 @@ final class NotesState {
 
             let result: ([ContextNote], [NoteSection]) = await Task.detached(priority: .userInitiated) {
                 let filtered = NotesState.filter(notes: source, query: query)
-                return (filtered, NoteSectionBuilder.build(from: filtered, todoOrder: order))
+                return (filtered, NoteSectionBuilder.build(from: filtered, todoOrder: order, includesTodo: false))
             }.value
 
             guard let self, !Task.isCancelled, self.searchText == query else { return }

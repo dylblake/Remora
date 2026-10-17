@@ -2,8 +2,8 @@
 //  TodoListUITests.swift
 //  RemoraUITests
 //
-//  The To-Do list at the top of All Notes: pinned notes as one-line rows
-//  in a stored order, reordered by dragging and removed by unpinning.
+//  The To-Do list at the top of All Notes: to-dos as one-line rows in a
+//  stored order, reordered by dragging, and also shown as grid tiles.
 //
 
 import XCTest
@@ -94,6 +94,21 @@ final class TodoListUITests: XCTestCase {
             .matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
     }
 
+    /// A grid tile, found by the title text inside it.
+    private func tile(_ title: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "noteTile")
+            .containing(NSPredicate(format: "elementType == %lu AND (label == %@ OR value == %@)",
+                                    XCUIElement.ElementType.staticText.rawValue, title, title))
+            .firstMatch
+    }
+
+    private var searchField: XCUIElement {
+        let container = app.descendants(matching: .any).matching(identifier: "allNotesSearchField").firstMatch
+        let inner = container.textFields.firstMatch
+        if inner.exists { return inner }
+        return app.textFields.firstMatch
+    }
+
     private var rowTitles: [String] {
         rows.map { String($0.label.prefix { $0 != "," }) }
     }
@@ -125,13 +140,36 @@ final class TodoListUITests: XCTestCase {
         XCTAssertTrue(header(count: 3).exists, "header should read To-Do with a count of 3")
         XCTAssertEqual(rowTitles, ["Alpha", "Bravo", "Charlie"])
         XCTAssertEqual(row("Alpha").label, "Alpha, Alpha first line")
-        // The unpinned note stays a tile below, under its own heading and
-        // with no per-app section.
+        // Every note is also a tile below, to-dos included, under its own
+        // heading and with no per-app section.
         XCTAssertTrue(app.staticTexts["Delta"].firstMatch.exists)
         let notesHeading = app.descendants(matching: .any)
-            .matching(NSPredicate(format: "label == %@", "Notes, 1 note")).firstMatch
-        XCTAssertTrue(notesHeading.exists, "the grid should be headed Notes with a count")
+            .matching(NSPredicate(format: "label == %@", "Notes, 4 notes")).firstMatch
+        XCTAssertTrue(notesHeading.exists, "the grid should be headed Notes with a count of every note")
+        for title in ["Alpha", "Bravo", "Charlie", "Delta"] {
+            XCTAssertTrue(tile(title).exists, "\(title) should have a tile")
+        }
         XCTAssertFalse(app.staticTexts["Apps"].exists, "notes are no longer grouped into sections")
+    }
+
+    func testSearchHidesTheToDoListAndFindsToDosInTheGrid() throws {
+        XCTAssertTrue(row("Alpha").waitForExistence(timeout: 5))
+        let todoList = app.descendants(matching: .any).matching(identifier: "todoList").firstMatch
+
+        let field = searchField
+        XCTAssertTrue(field.waitForExistence(timeout: 5), "search field not found")
+        field.click()
+        field.typeText("Bravo")
+
+        XCTAssertTrue(todoList.waitForNonExistence(timeout: 3), "the To-Do list should hide while searching")
+        XCTAssertTrue(tile("Bravo").waitForExistence(timeout: 3), "the to-do should be found as a tile")
+        XCTAssertFalse(tile("Delta").exists, "only matches should show")
+
+        field.typeKey("a", modifierFlags: .command)
+        field.typeKey(.delete, modifierFlags: [])
+
+        XCTAssertTrue(todoList.waitForExistence(timeout: 3), "clearing the search should bring the list back")
+        XCTAssertTrue(waitForRowTitles(["Alpha", "Bravo", "Charlie"]), "got \(rowTitles)")
     }
 
     func testDraggingARowReordersAndPersists() throws {

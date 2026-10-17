@@ -68,7 +68,53 @@ final class TodoOrderTests: XCTestCase {
         XCTAssertEqual(todo?.title, "To-Do")
         XCTAssertEqual(todo?.notes.map(\.id), [c.id, a.id, b.id])
         XCTAssertEqual(sections.map(\.id), [NoteSectionBuilder.todoSectionID, NoteSectionBuilder.notesSectionID])
-        XCTAssertEqual(sections.last?.notes.map(\.id), [tile.id])
+        // The grid holds every note, to-dos included, newest first.
+        XCTAssertEqual(sections.last?.notes.map(\.id), [a.id, b.id, c.id, tile.id])
+    }
+
+    func testWithoutTheToDoListTheGridStillHoldsToDos() {
+        let todo = note("todo", pinned: true, updated: 2)
+        let tile = note("tile", pinned: false, updated: 1)
+
+        let sections = NoteSectionBuilder.build(from: [todo, tile], todoOrder: [todo.id], includesTodo: false)
+
+        XCTAssertEqual(sections.first { $0.id == NoteSectionBuilder.todoSectionID }?.notes, [])
+        XCTAssertEqual(sections.last?.notes.map(\.id), [todo.id, tile.id])
+    }
+
+    /// A to-do shows as a row and as a tile: two keyboard stops, rows
+    /// first, none repeated.
+    func testFocusOrderListsRowsThenTilesWithoutCollisions() {
+        let a = note("a", pinned: true, updated: 2)
+        let b = note("b", pinned: false, updated: 1)
+        let sections = NoteSectionBuilder.build(from: [a, b], todoOrder: [a.id])
+
+        let stops = NoteSectionBuilder.focusOrder(sections)
+
+        XCTAssertEqual(stops, [
+            ListFocus(sectionID: NoteSectionBuilder.todoSectionID, noteID: a.id),
+            ListFocus(sectionID: NoteSectionBuilder.notesSectionID, noteID: a.id),
+            ListFocus(sectionID: NoteSectionBuilder.notesSectionID, noteID: b.id)
+        ])
+        XCTAssertEqual(Set(stops).count, stops.count)
+    }
+
+    func testSearchHidesTheToDoSectionAndClearingBringsItBack() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let notes = ["alpha", "bravo", "charlie"].map { note($0, pinned: true) }
+        notes.forEach(state.upsert)
+        state.reorderTodo(visibleOrder: [notes[2].id, notes[0].id, notes[1].id])
+
+        state.searchText = "bravo"
+        // A note change recomputes at once with the current query.
+        state.upsert(note("delta", pinned: false))
+        XCTAssertEqual(todoTitles(state), [])
+        XCTAssertEqual(state.noteSections.last?.notes.compactMap(\.title), ["bravo"])
+
+        state.searchText = ""
+        XCTAssertEqual(todoTitles(state), ["charlie", "alpha", "bravo"])
     }
 
     // MARK: NotesState

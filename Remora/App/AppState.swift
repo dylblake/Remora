@@ -843,7 +843,7 @@ final class AppState {
     private func resetAllNotesBrowsing() {
         notesState.allNotesScrollResetID = UUID()
         notesState.selectedNoteIDs.removeAll()
-        notesState.keyboardFocusedNoteID = nil
+        notesState.keyboardFocus = nil
         notesState.searchText = ""
     }
 
