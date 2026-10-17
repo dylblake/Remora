@@ -23,27 +23,81 @@ struct NoteSelectionCheckbox: View {
     }
 }
 
-struct NotePinButton: View {
+/// Puts a note at the bottom of the To-Do list.
+struct TodoAddButton: View {
     @Environment(AppState.self) private var appState
     let note: ContextNote
 
     var body: some View {
         Button {
-            if note.isPinned {
-                appState.completeTodo([note.id], origin: .allNotes)
-            } else {
-                appState.addToTodo([note])
-            }
+            appState.addToTodo([note])
         } label: {
-            Image(systemName: note.isPinned ? "pin.fill" : "pin")
+            Image(systemName: "circle.badge.plus")
                 .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(note.isPinned ? RemoraTheme.accent : RemoraTheme.secondaryText)
+                .foregroundStyle(RemoraTheme.secondaryText)
                 .frame(width: 26, height: 26)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.borderless)
-        .help(note.isPinned ? "Remove from To-Do" : "Add to To-Do")
-        .accessibilityLabel(note.isPinned ? "Remove from To-Do" : "Add to To-Do")
+        .help("Add to To-Do")
+        .accessibilityLabel("Add to To-Do")
+    }
+}
+
+/// The empty circle on a to-do. A click shows the checkmark for a moment,
+/// then ticks the note off (with "Completed · Undo"). VoiceOver's action
+/// ticks straight away.
+struct TodoCheckCircle: View {
+    @Environment(AppState.self) private var appState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let note: ContextNote
+    /// The note's title as the caller shows it, for VoiceOver.
+    let title: String
+    var origin: TodoCompletionOrigin = .allNotes
+    /// What ticking does, in place of the plain `completeTodo`: the row
+    /// wraps it in its removal animation and moves keyboard focus.
+    var complete: (() -> Void)?
+
+    @State private var isTicking = false
+
+    static let checkmarkDuration: Duration = .milliseconds(350)
+
+    var body: some View {
+        Button(action: tick) {
+            Image(systemName: isTicking ? "checkmark.circle.fill" : "circle")
+                .font(.system(size: 15, weight: .regular))
+                .foregroundStyle(isTicking ? RemoraTheme.accent : RemoraTheme.secondaryText)
+                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
+                .frame(width: 26, height: 26)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.borderless)
+        .help("Complete")
+        .accessibilityLabel("Complete \u{201C}\(title)\u{201D}")
+        .accessibilityAction {
+            guard !isTicking else { return }
+            isTicking = true
+            commit()
+        }
+    }
+
+    /// Shows the checkmark, then commits. A second click meanwhile is
+    /// ignored.
+    private func tick() {
+        guard !isTicking else { return }
+        isTicking = true
+        Task {
+            try? await Task.sleep(for: Self.checkmarkDuration)
+            commit()
+        }
+    }
+
+    private func commit() {
+        if let complete {
+            complete()
+        } else {
+            appState.completeTodo([note.id], origin: origin)
+        }
     }
 }
 

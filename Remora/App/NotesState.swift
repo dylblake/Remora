@@ -180,6 +180,13 @@ final class NotesState {
         return TodoCompletion(entries: entries)
     }
 
+    /// True when something is selected and every selected note is on
+    /// To-Do: the multi-select bar's to-do button then ticks, not adds.
+    var selectionIsAllOnTodo: Bool {
+        let selectedNotes = notes.filter { selectedNoteIDs.contains($0.id) }
+        return !selectedNotes.isEmpty && selectedNotes.allSatisfy(\.isPinned)
+    }
+
     /// The multi-select bar's to-do button. When every selected note is
     /// on To-Do it ticks them all as one batch and returns it, for Undo;
     /// otherwise it adds the ones that aren't and returns nil.
@@ -187,14 +194,14 @@ final class NotesState {
     func toggleTodoForSelectedNotes() -> TodoCompletion? {
         guard !selectedNoteIDs.isEmpty else { return nil }
         let selected = selectedNoteIDs
+        let completesBatch = selectionIsAllOnTodo
         selectedNoteIDs.removeAll()
 
-        let selectedNotes = notes.filter { selected.contains($0.id) }
-        guard selectedNotes.allSatisfy(\.isPinned) else {
+        guard completesBatch else {
             addToTodo(selected)
             return nil
         }
-        return completeTodos(selectedNotes.map(\.id))
+        return completeTodos(notes.filter { selected.contains($0.id) }.map(\.id))
     }
 
     /// Undoes a tick: the notes go back on To-Do at the indexes they had.

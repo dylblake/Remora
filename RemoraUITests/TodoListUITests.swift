@@ -127,6 +127,25 @@ final class TodoListUITests: XCTestCase {
         return rowTitles == expected
     }
 
+    /// Every tile, in reading order (top to bottom, then leading to trailing).
+    private var tiles: [XCUIElement] {
+        app.descendants(matching: .any).matching(identifier: "noteTile").allElementsBoundByIndex
+            .sorted { ($0.frame.minY, $0.frame.minX) < ($1.frame.minY, $1.frame.minX) }
+    }
+
+    private func tileIndex(_ title: String) -> Int? {
+        let target = tile(title).frame
+        return tiles.firstIndex { $0.frame == target }
+    }
+
+    private func completeButton(_ title: String) -> XCUIElement {
+        app.buttons["Complete \u{201C}\(title)\u{201D}"]
+    }
+
+    private func button(_ label: String) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label == %@", label)).firstMatch
+    }
+
     private func storedOrder() throws -> [String] {
         let data = try Data(contentsOf: storeDirectory.appending(path: "notes.json"))
         let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
@@ -196,5 +215,73 @@ final class TodoListUITests: XCTestCase {
         XCTAssertTrue(waitForRowTitles(["Alpha", "Charlie"]), "got \(rowTitles)")
         XCTAssertTrue(header(count: 2).waitForExistence(timeout: 3))
         XCTAssertTrue(app.staticTexts["Bravo"].firstMatch.waitForExistence(timeout: 3), "Bravo should be a tile now")
+    }
+
+    // MARK: Tiles and the multi-select bar
+
+    func testTileCircleTicksAndTileStays() throws {
+        XCTAssertTrue(row("Bravo").waitForExistence(timeout: 5))
+        let bravoTile = tile("Bravo")
+        let indexBefore = try XCTUnwrap(tileIndex("Bravo"))
+
+        // The tile's circle shows without hovering.
+        let circle = bravoTile.buttons["Complete \u{201C}Bravo\u{201D}"]
+        XCTAssertTrue(circle.waitForExistence(timeout: 3), "the to-do tile should offer its circle")
+        circle.click()
+
+        XCTAssertTrue(waitForRowTitles(["Alpha", "Charlie"]), "got \(rowTitles)")
+        XCTAssertTrue(header(count: 2).waitForExistence(timeout: 3))
+        XCTAssertTrue(tile("Bravo").exists, "the tile stays in the grid")
+        XCTAssertEqual(tileIndex("Bravo"), indexBefore, "the tile keeps its place")
+        XCTAssertFalse(completeButton("Bravo").exists, "a ticked note has no circle")
+        XCTAssertTrue(app.staticTexts["All Notes"].exists, "ticking must not open the note")
+    }
+
+    func testAddToToDoFromTileAppendsRow() throws {
+        XCTAssertTrue(row("Alpha").waitForExistence(timeout: 5))
+        let deltaTile = tile("Delta")
+        XCTAssertTrue(deltaTile.waitForExistence(timeout: 3))
+
+        deltaTile.hover()
+        let add = deltaTile.buttons["Add to To-Do"]
+        XCTAssertTrue(add.waitForExistence(timeout: 3))
+        add.click()
+
+        XCTAssertTrue(waitForRowTitles(["Alpha", "Bravo", "Charlie", "Delta"]), "got \(rowTitles)")
+        XCTAssertTrue(completeButton("Delta").waitForExistence(timeout: 3), "Delta's tile now has its circle")
+    }
+
+    func testMultiSelectAddsThenTicksBatch() throws {
+        XCTAssertTrue(row("Alpha").waitForExistence(timeout: 5))
+
+        let deltaTile = tile("Delta")
+        deltaTile.hover()
+        let select = deltaTile.buttons["Select note"]
+        XCTAssertTrue(select.waitForExistence(timeout: 3))
+        select.click()
+
+        let add = button("Add selected notes to To-Do")
+        XCTAssertTrue(add.waitForExistence(timeout: 3), "a mixed selection offers Add")
+        add.click()
+        XCTAssertTrue(waitForRowTitles(["Alpha", "Bravo", "Charlie", "Delta"]), "got \(rowTitles)")
+
+        // Every tile offers its checkbox once anything is selected.
+        tile("Alpha").hover()
+        tile("Alpha").buttons["Select note"].click()
+        for title in ["Bravo", "Charlie", "Delta"] {
+            let checkbox = tile(title).buttons["Select note"]
+            XCTAssertTrue(checkbox.waitForExistence(timeout: 3), "\(title) checkbox missing")
+            checkbox.click()
+        }
+
+        let complete = button("Complete selected notes")
+        XCTAssertTrue(complete.waitForExistence(timeout: 3), "an all-to-do selection offers Complete")
+        complete.click()
+
+        let todoList = app.descendants(matching: .any).matching(identifier: "todoList").firstMatch
+        XCTAssertTrue(todoList.waitForNonExistence(timeout: 4), "every row should be ticked; got \(rowTitles)")
+        for title in ["Alpha", "Bravo", "Charlie", "Delta"] {
+            XCTAssertTrue(tile(title).exists, "\(title) stays in the grid")
+        }
     }
 }

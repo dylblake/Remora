@@ -147,6 +147,20 @@ final class TodoUndoTests: XCTestCase {
         XCTAssertTrue(state.selectedNoteIDs.isEmpty)
     }
 
+    /// The bulk bar names what its button will do: tick when every
+    /// selected note is on To-Do, add otherwise.
+    func testTheBulkButtonCompletesOnlyWhenEverySelectedNoteIsOnToDo() throws {
+        let (state, directory) = try makeState()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let notes = seeded(state)
+
+        XCTAssertFalse(state.selectionIsAllOnTodo, "an empty selection has nothing to tick")
+        state.selectedNoteIDs = [notes[0].id, notes[2].id]
+        XCTAssertTrue(state.selectionIsAllOnTodo)
+        state.selectedNoteIDs = [notes[0].id, notes[3].id]
+        XCTAssertFalse(state.selectionIsAllOnTodo)
+    }
+
     func testAnEmptySelectionDoesNothing() throws {
         let (state, directory) = try makeState()
         defer { try? FileManager.default.removeItem(at: directory) }

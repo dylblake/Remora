@@ -245,7 +245,12 @@ struct ContentView: View {
             .buttonStyle(.borderless)
             .controlSize(.small)
 
-            IconButton(systemName: "pin", accessibilityLabel: "Add or remove selected notes from To-Do", size: 13, hitSize: 30) {
+            IconButton(
+                systemName: "circle.badge.plus",
+                accessibilityLabel: appState.notesState.selectionIsAllOnTodo ? "Complete selected notes" : "Add selected notes to To-Do",
+                size: 13,
+                hitSize: 30
+            ) {
                 appState.toggleTodoForSelectedNotes()
             }
 
@@ -272,7 +277,7 @@ struct ContentView: View {
 
 }
 
-/// Pinned notes as a compact, hand-ordered list above the tiles: one line
+/// To-dos as a compact, hand-ordered list above the tiles: one line
 /// each, dragged into whatever order the user wants to tackle them in.
 private struct TodoListSection: View {
     @Environment(AppState.self) private var appState
@@ -421,7 +426,7 @@ private struct TodoListSection: View {
 }
 
 /// One To-Do line: where the note lives, its title, and a faint first
-/// line. The pin (shown on hover) takes it back off the list.
+/// line.
 private struct TodoRow<ReorderGesture: Gesture>: View {
     @Environment(AppState.self) private var appState
 
@@ -475,11 +480,6 @@ private struct TodoRow<ReorderGesture: Gesture>: View {
                 if canMoveDown { Button("Move Down") { onMove(1) } }
             }
             .accessibilityIdentifier("todoRow")
-
-            NotePinButton(note: note)
-                .environment(appState)
-                .opacity(isHovered || isKeyboardFocused ? 1 : 0)
-                .padding(.trailing, Spacing.xxs)
         }
         .background(rowBackground)
         .scaleEffect(isDragged ? 1.01 : 1)
@@ -587,8 +587,9 @@ private struct NoteTile: View {
     private static let headerHeight: CGFloat = 26
     private static let footerHeight: CGFloat = 22
     private static let checkboxWidth: CGFloat = 22
-    /// Pin (26) + delete (26) + checkbox.
-    private static let actionsWidth: CGFloat = 52 + checkboxWidth
+    private static let buttonWidth: CGFloat = 26
+    /// Delete + to-do button + checkbox.
+    private static let actionsWidth: CGFloat = 2 * buttonWidth + checkboxWidth
 
     var body: some View {
         let text = NoteCardStyle.tileText(for: note)
@@ -621,6 +622,8 @@ private struct NoteTile: View {
         }
         .onHover { isHovered = $0 }
         .help(NoteCardStyle.returnCaveat(for: note) ?? "")
+        // One group per tile, so its circle and buttons read as its own.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("noteTile")
     }
 
@@ -645,14 +648,20 @@ private struct NoteTile: View {
 
     private var actions: some View {
         HStack(spacing: 0) {
-            Group {
-                NotePinButton(note: note)
-                    .environment(appState)
+            NoteDeleteButton(note: note)
+                .environment(appState)
+                .opacity(showsActions ? 1 : 0)
 
-                NoteDeleteButton(note: note)
+            // A to-do's circle is always there; "Add to To-Do" waits for
+            // the pointer like the other actions.
+            if note.isPinned {
+                TodoCheckCircle(note: note, title: NoteCardStyle.primaryTitle(for: note))
                     .environment(appState)
+            } else {
+                TodoAddButton(note: note)
+                    .environment(appState)
+                    .opacity(showsActions ? 1 : 0)
             }
-            .opacity(showsActions ? 1 : 0)
 
             // Trailing, so it stays put when it is the only one showing.
             NoteSelectionCheckbox(noteID: note.id)
@@ -683,8 +692,11 @@ private struct NoteTile: View {
     /// Once anything is selected, every tile offers its checkbox.
     private var isSelecting: Bool { !appState.notesState.selectedNoteIDs.isEmpty }
 
+    /// Room the source name leaves for whichever actions are showing.
+    /// A to-do's circle always shows, with the checkbox's slot beside it.
     private var reservedActionsWidth: CGFloat {
         if showsActions { return Self.actionsWidth }
+        if note.isPinned { return Self.buttonWidth + Self.checkboxWidth }
         return isSelecting ? Self.checkboxWidth : 0
     }
 
