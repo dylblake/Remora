@@ -84,11 +84,6 @@ final class TodoListUITests: XCTestCase {
 
     // MARK: Helpers
 
-    private var rows: [XCUIElement] {
-        app.descendants(matching: .any).matching(identifier: "todoRow").allElementsBoundByIndex
-            .sorted { $0.frame.minY < $1.frame.minY }
-    }
-
     private func row(_ title: String) -> XCUIElement {
         app.descendants(matching: .any).matching(identifier: "todoRow")
             .matching(NSPredicate(format: "label BEGINSWITH %@", title)).firstMatch
@@ -109,8 +104,16 @@ final class TodoListUITests: XCTestCase {
         return app.textFields.firstMatch
     }
 
+    /// The rows' titles top to bottom, read from one snapshot: a ticked
+    /// row fades out, and reading rows one by one can race its removal.
     private var rowTitles: [String] {
-        rows.map { String($0.label.prefix { $0 != "," }) }
+        guard let list = try? todoList.snapshot() else { return [] }
+        func rowSnapshots(in element: XCUIElementSnapshot) -> [XCUIElementSnapshot] {
+            element.children.flatMap { $0.identifier == "todoRow" ? [$0] : rowSnapshots(in: $0) }
+        }
+        return rowSnapshots(in: list)
+            .sorted { $0.frame.minY < $1.frame.minY }
+            .map { String($0.label.prefix { $0 != "," }) }
     }
 
     private func header(count: Int) -> XCUIElement {
@@ -304,5 +307,104 @@ final class TodoListUITests: XCTestCase {
         for title in ["Alpha", "Bravo", "Charlie", "Delta"] {
             XCTAssertTrue(tile(title).exists, "\(title) stays in the grid")
         }
+    }
+
+    // MARK: Completed · Undo
+
+    private var undoBar: XCUIElement {
+        app.descendants(matching: .any).matching(identifier: "todoUndoBar").firstMatch
+    }
+
+    /// Clicks a row's circle and waits for the row to go.
+    private func tickRow(_ title: String, leaving expected: [String]) {
+        let circle = todoList.buttons["Complete \u{201C}\(title)\u{201D}"]
+        XCTAssertTrue(circle.waitForExistence(timeout: 3), "\(title) row circle missing")
+        circle.click()
+        XCTAssertTrue(waitForRowTitles(expected), "after ticking \(title) got \(rowTitles)")
+    }
+
+    func testUndoRestoresPosition() throws {
+        XCTAssertTrue(row("Bravo").waitForExistence(timeout: 5))
+        tickRow("Bravo", leaving: ["Alpha", "Charlie"])
+
+        XCTAssertTrue(undoBar.waitForExistence(timeout: 3), "a tick should offer Undo")
+        XCTAssertTrue(undoBar.staticTexts["Completed"].exists)
+        undoBar.buttons["Undo"].click()
+
+        XCTAssertTrue(waitForRowTitles(["Alpha", "Bravo", "Charlie"]), "got \(rowTitles)")
+        XCTAssertTrue(completeButton("Bravo").waitForExistence(timeout: 3), "the tile's circle comes back")
+        XCTAssertTrue(undoBar.waitForNonExistence(timeout: 3), "Undo is used up")
+    }
+
+    func testCommandZUndoes() throws {
+        XCTAssertTrue(row("Alpha").waitForExistence(timeout: 5))
+        tickRow("Alpha", leaving: ["Bravo", "Charlie"])
+        XCTAssertTrue(undoBar.waitForExistence(timeout: 3))
+
+        app.typeKey("z", modifierFlags: .command)
+        XCTAssertTrue(waitForRowTitles(["Alpha", "Bravo", "Charlie"]), "got \(rowTitles)")
+
+        // Nothing pending: ⌘Z does nothing.
+        XCTAssertTrue(undoBar.waitForNonExistence(timeout: 3))
+        app.typeKey("z", modifierFlags: .command)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        XCTAssertEqual(rowTitles, ["Alpha", "Bravo", "Charlie"])
+        XCTAssertTrue(app.staticTexts["All Notes"].exists)
+    }
+
+    func testUndoBarExpires() throws {
+        XCTAssertTrue(row("Charlie").waitForExistence(timeout: 5))
+        tickRow("Charlie", leaving: ["Alpha", "Bravo"])
+        XCTAssertTrue(undoBar.waitForExistence(timeout: 3))
+        let shownAt = Date()
+
+        RunLoop.current.run(until: shownAt.addingTimeInterval(3.5))
+        XCTAssertTrue(undoBar.exists, "the bar should still show at 3.5s")
+        XCTAssertTrue(undoBar.waitForNonExistence(timeout: 3.5), "the bar should be gone by about 7s")
+    }
+
+    func testSecondTickReplacesUndo() throws {
+        XCTAssertTrue(row("Alpha").waitForExistence(timeout: 5))
+        tickRow("Alpha", leaving: ["Bravo", "Charlie"])
+        tickRow("Charlie", leaving: ["Bravo"])
+
+        XCTAssertTrue(undoBar.waitForExistence(timeout: 3))
+        undoBar.buttons["Undo"].click()
+        XCTAssertTrue(waitForRowTitles(["Bravo", "Charlie"]), "only the second tick comes back; got \(rowTitles)")
+    }
+
+    func testBatchUndoRestoresOrder() throws {
+        XCTAssertTrue(row("Alpha").waitForExistence(timeout: 5))
+
+        tile("Alpha").hover()
+        tile("Alpha").buttons["Select note"].click()
+        for title in ["Bravo", "Charlie"] {
+            let checkbox = tile(title).buttons["Select note"]
+            XCTAssertTrue(checkbox.waitForExistence(timeout: 3), "\(title) checkbox missing")
+            checkbox.click()
+        }
+        let complete = button("Complete selected notes")
+        XCTAssertTrue(complete.waitForExistence(timeout: 3))
+        complete.click()
+        XCTAssertTrue(todoList.waitForNonExistence(timeout: 4), "got \(rowTitles)")
+
+        XCTAssertTrue(undoBar.waitForExistence(timeout: 3))
+        XCTAssertTrue(undoBar.staticTexts["Completed 3"].exists, "a batch counts its notes")
+        undoBar.buttons["Undo"].click()
+        XCTAssertTrue(waitForRowTitles(["Alpha", "Bravo", "Charlie"]), "got \(rowTitles)")
+    }
+
+    func testReAddAfterExpiryGoesToBottom() throws {
+        XCTAssertTrue(row("Alpha").waitForExistence(timeout: 5))
+        tickRow("Alpha", leaving: ["Bravo", "Charlie"])
+        XCTAssertTrue(undoBar.waitForExistence(timeout: 3))
+        XCTAssertTrue(undoBar.waitForNonExistence(timeout: 8), "the bar should expire")
+
+        let alphaTile = tile("Alpha")
+        alphaTile.hover()
+        let add = alphaTile.buttons["Add to To-Do"]
+        XCTAssertTrue(add.waitForExistence(timeout: 3))
+        add.click()
+        XCTAssertTrue(waitForRowTitles(["Bravo", "Charlie", "Alpha"]), "got \(rowTitles)")
     }
 }

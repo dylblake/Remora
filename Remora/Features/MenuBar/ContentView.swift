@@ -100,14 +100,27 @@ struct ContentView: View {
             .onKeyPress(.space) { unlessSearching { toggleKeyboardFocusedSelection() } }
             .onKeyPress(.delete) { unlessSearching { confirmDeleteKeyboardFocusedNote() } }
             .onKeyPress(.deleteForward) { unlessSearching { confirmDeleteKeyboardFocusedNote() } }
-            .background(
+            .background {
                 // Hidden ⌘F target: moves focus into the search field.
-                Button("") { searchFocusRequestID = UUID() }
-                    .keyboardShortcut("f", modifiers: .command)
-                    .opacity(0)
-                    .frame(width: 0, height: 0)
-                    .accessibilityHidden(true)
-            )
+                hiddenShortcut("f") { searchFocusRequestID = UUID() }
+                // ⌘Z exists only while a tick can be undone, so it never
+                // swallows the key otherwise.
+                if appState.todoUndo.pending != nil {
+                    hiddenShortcut("z") { undoLastCompletion() }
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if let pending = appState.todoUndo.pending {
+                    TodoUndoBar(title: TodoUndoState.barTitle(for: pending.completion)) {
+                        undoLastCompletion()
+                    }
+                    .padding(.bottom, Spacing.lg)
+                    .transition(PanelAnimation.prefersReducedMotion
+                        ? .opacity
+                        : .opacity.combined(with: .move(edge: .bottom)))
+                }
+            }
+            .animation(PanelAnimation.prefersReducedMotion ? nil : .easeOut(duration: 0.18), value: appState.todoUndo.pending?.token)
             .onChange(of: appState.notesState.allNotesScrollResetID) { _, _ in
                 proxy.scrollTo("top", anchor: .top)
                 isListFocused = true
@@ -115,6 +128,20 @@ struct ContentView: View {
         }
 
         content
+    }
+
+    private func hiddenShortcut(_ key: KeyEquivalent, action: @escaping () -> Void) -> some View {
+        Button("", action: action)
+            .keyboardShortcut(key, modifiers: .command)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+    }
+
+    private func undoLastCompletion() {
+        withAnimation(PanelAnimation.prefersReducedMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.22)) {
+            appState.undoLastCompletion()
+        }
     }
 
     // MARK: - Keyboard navigation
@@ -275,6 +302,32 @@ struct ContentView: View {
         .glassEffect(.regular, in: Capsule(style: .continuous))
     }
 
+}
+
+/// "Completed · Undo", floating at the bottom of All Notes for a few
+/// seconds after a tick.
+private struct TodoUndoBar: View {
+    let title: String
+    let onUndo: () -> Void
+
+    var body: some View {
+        HStack(spacing: Spacing.xs) {
+            Text(title)
+                .font(.subheadline.weight(.medium))
+            Text("·")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            Button("Undo", action: onUndo)
+                .buttonStyle(.borderless)
+                .font(.subheadline.weight(.semibold))
+        }
+        .padding(.horizontal, Spacing.md)
+        .padding(.vertical, Spacing.xs)
+        .glassEffect(.regular, in: Capsule(style: .continuous))
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier("todoUndoBar")
+    }
 }
 
 /// To-dos as a compact, hand-ordered list above the tiles: one line

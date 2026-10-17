@@ -86,6 +86,13 @@ final class TodoUndoTests: XCTestCase {
         XCTAssertNil(undo.pending)
     }
 
+    func testTheBarSaysCompletedAndCountsABatch() {
+        let one = TodoCompletion(entries: [.init(noteID: UUID(), index: 0)])
+        let three = TodoCompletion(entries: (0..<3).map { .init(noteID: UUID(), index: $0) })
+        XCTAssertEqual(TodoUndoState.barTitle(for: one), "Completed")
+        XCTAssertEqual(TodoUndoState.barTitle(for: three), "Completed 3")
+    }
+
     func testUndoAfterTwoTicksRestoresOnlyTheSecond() throws {
         let (state, directory) = try makeState()
         defer { try? FileManager.default.removeItem(at: directory) }

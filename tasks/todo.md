@@ -8,7 +8,7 @@ Full detail, commands and the UI-test workflow are in `tasks/plan.md`. C-numbers
 - [x] **Checkpoint A:** unit suite green, build OK.
 - [x] **T4** `TodoAddButton` (`circle.badge.plus`) and `TodoCheckCircle`; tiles (circle always visible on to-dos) and multi-select bar (C1, C3, C6, C7, C17). UI.
 - [x] **T5** Leading row circle outside the drag gesture; context menu "Complete"; VO "Complete" action; Reduce Motion removal (C5, C10, C11, C19). UI + manual Reduce Motion check.
-- [ ] **T6** "Completed · Undo" bar in All Notes plus hidden ⌘Z shortcut (C12, C13, C15, C16, C17). UI.
+- [x] **T6** "Completed · Undo" bar in All Notes plus hidden ⌘Z shortcut (C12, C13, C15, C16, C17). UI.
 - [ ] **T7** ⌘Return ticks the focused To-Do row; Return/Space unchanged (C9). UI.
 - [ ] **Checkpoint B:** unit + TodoList/Search UI green via watchdog workflow; short manual scratch-store run.
 - [ ] **T8** Editor footer: two states plus footer "Completed · Undo"; `editorTodoButton` (C8, C14, C6). UI + unit.

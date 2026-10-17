@@ -47,6 +47,12 @@ final class TodoUndoState {
         }
     }
 
+    /// "Completed", or "Completed 3" for a batch.
+    nonisolated static func barTitle(for completion: TodoCompletion) -> String {
+        let count = completion.entries.count
+        return count > 1 ? "Completed \(count)" : "Completed"
+    }
+
     /// The pending completion, if any, and an empty slot afterwards.
     func take() -> TodoCompletion? {
         expiryTask?.cancel()
