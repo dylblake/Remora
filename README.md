@@ -12,7 +12,7 @@ Remora is a macOS menu bar app for context-aware notes. It lets you attach notes
   - the project a terminal is in (Terminal, iTerm2, Ghostty, Warp and others)
   - app-specific contexts such as Slack channels/DMs, Figma files and Linear issues when detectable
 - View all saved notes in a dedicated notes window
-- Pin notes to a To-Do list at the top of All Notes and drag them into order
+- Add notes to a To-Do list at the top of All Notes, drag them into order, and tick them off when they're done (with Undo)
 - See every other note in one grid, each marked with the icon of the site, app or file it belongs to
 - Follow macOS light and dark mode automatically
 
