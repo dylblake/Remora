@@ -20,6 +20,8 @@ final class AppState {
     let browserPermissions: BrowserPermissionsState
     let notesState: NotesState
     let editor: EditorState
+    /// The single "Completed · Undo" slot shared by All Notes and the editor.
+    let todoUndo = TodoUndoState()
     let hotkeys: HotKeyState
     /// Where All Notes is: not shown, alone at the screen edge, or out
     /// from under the open note drawer, beside it.
@@ -697,7 +699,7 @@ final class AppState {
         // wait for the disk. The slide runs in the render server meanwhile.
         panelController?.dismiss()
         closeStackedAllNotes()
-        editor.persistCurrentEditorContent()
+        editor.persistCurrentEditorContentIfChanged()
         notesState.flush()
         resetEditorAfterDismiss()
     }
@@ -817,7 +819,7 @@ final class AppState {
 
         // So the list shows what has just been typed. An empty drawer
         // isn't a note yet, and isn't a reason to delete one either.
-        editor.persistCurrentEditorContent(deleteIfEmpty: false)
+        editor.persistCurrentEditorContentIfChanged(deleteIfEmpty: false)
         resetAllNotesBrowsing()
         allNotesUsesStackedLayout = true
         allNotesMode = .stacked
@@ -843,7 +845,7 @@ final class AppState {
     private func resetAllNotesBrowsing() {
         notesState.allNotesScrollResetID = UUID()
         notesState.selectedNoteIDs.removeAll()
-        notesState.keyboardFocusedNoteID = nil
+        notesState.keyboardFocus = nil
         notesState.searchText = ""
     }
 
@@ -954,7 +956,7 @@ final class AppState {
                 return
             }
             endDictationForDismiss()
-            editor.persistCurrentEditorContent()
+            editor.persistCurrentEditorContentIfChanged()
             notesState.flush()
             editor.isViewingOrphanedNote = false
             // Hold the drawer on the picked note while its page or file
@@ -1088,7 +1090,7 @@ final class AppState {
     func relinkOrphanedNoteToCurrentContext() {
         guard editor.isViewingOrphanedNote,
               let oldContext = editor.activeContext,
-              let note = notesState.note(for: oldContext) else { return }
+              let noteID = notesState.note(for: oldContext)?.id else { return }
 
         Task { [weak self] in
             guard let self else { return }
@@ -1101,6 +1103,9 @@ final class AppState {
                 return
             }
 
+            // Read again: a tick or edit while the context resolved must
+            // not be written back over.
+            guard let note = self.notesState.notes.first(where: { $0.id == noteID }) else { return }
             self.notesState.upsert(note.copying(context: newContext, updatedAt: .now))
             self.editor.activeContext = newContext
             self.editor.isViewingOrphanedNote = false
@@ -1108,23 +1113,37 @@ final class AppState {
         }
     }
 
-    func togglePinForSelectedNotes() {
-        let selected = notesState.selectedNoteIDs
-        guard let nextPinned = notesState.togglePinForSelectedNotes() else { return }
+    // MARK: - To-Do
 
-        if let context = editor.activeContext,
-           let active = notesState.note(for: context),
-           selected.contains(active.id) {
-            editor.isActiveNotePinned = nextPinned
-        }
+    /// Puts notes at the bottom of the To-Do list.
+    func addToTodo(_ notes: [ContextNote]) {
+        notesState.addToTodo(Set(notes.map(\.id)))
+        editor.syncActiveNoteTodoFlag()
     }
 
-    func togglePin(_ note: ContextNote) {
-        notesState.togglePin(note)
+    /// Ticks notes off To-Do and offers "Completed · Undo" for them,
+    /// replacing whatever undo was pending.
+    func completeTodo(_ noteIDs: [UUID], origin: TodoCompletionOrigin) {
+        guard let completion = notesState.completeTodos(noteIDs) else { return }
+        todoUndo.register(completion, origin: origin)
+        editor.syncActiveNoteTodoFlag()
+    }
 
-        if editor.activeContext?.id == note.context.id {
-            editor.isActiveNotePinned = !note.isPinned
+    /// Puts the most recent tick (or batch) back where it was. Does
+    /// nothing once the undo has expired.
+    func undoLastCompletion() {
+        guard let completion = todoUndo.take() else { return }
+        notesState.restore(completion)
+        editor.syncActiveNoteTodoFlag()
+    }
+
+    /// The multi-select bar: ticks the batch when every selected note is
+    /// on To-Do, otherwise adds the rest.
+    func toggleTodoForSelectedNotes() {
+        if let completion = notesState.toggleTodoForSelectedNotes() {
+            todoUndo.register(completion, origin: .allNotes)
         }
+        editor.syncActiveNoteTodoFlag()
     }
 
     func deleteActiveNote() {
@@ -1139,19 +1158,30 @@ final class AppState {
         dismissEditor()
     }
 
-    func togglePinForActiveNote() {
-        guard let context = editor.activeContext else { return }
-
-        let nextPinnedState = !editor.isActiveNotePinned
-        editor.isActiveNotePinned = nextPinnedState
-
-        // Persist writes the editor's content with the new pin state; when
-        // the editor is empty it declines (returning false) — in that case
-        // just flip the pin on an existing note, if any.
-        if !editor.persistCurrentEditorContent(deleteIfEmpty: false),
-           let existingNote = notesState.note(for: context) {
-            notesState.upsert(existingNote.copying(updatedAt: .now, isPinned: nextPinnedState))
+    /// The editor footer's "Add to To-Do". Saves any typing first; an
+    /// empty new drawer just remembers the flag for when it's saved.
+    func addActiveNoteToTodo() {
+        guard editor.activeContext != nil else { return }
+        guard let note = editor.storedActiveNoteSavingTyping() else {
+            editor.isActiveNotePinned = true
+            return
         }
+        addToTodo([note])
+    }
+
+    /// The editor footer's circle: ticks the open note off with the
+    /// footer's "Completed · Undo". An empty new drawer has nothing to
+    /// restore, so it only clears the flag, with no undo bar.
+    /// `noteID` is the note the circle was clicked on (nil for an empty
+    /// drawer): the tick lands after its checkmark, and if the drawer has
+    /// moved to another note by then, nothing happens.
+    func completeActiveNote(expecting noteID: UUID?) {
+        guard editor.isShowingStoredNote(noteID) else { return }
+        guard let note = editor.storedActiveNoteSavingTyping() else {
+            editor.isActiveNotePinned = false
+            return
+        }
+        completeTodo([note.id], origin: .editor)
     }
 
     func setOnboardingWindowVisible(_ isVisible: Bool) {

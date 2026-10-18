@@ -185,32 +185,35 @@ struct FloatingNoteEditorView: View {
             .glassEffect(.regular, in: Capsule(style: .continuous))
             .accessibilityIdentifier("editorAllNotesButton")
 
-            ViewThatFits(in: .horizontal) {
-                Text("Press \(appState.hotkeys.hotKeyDisplayString) again or Escape to dismiss")
-                    .lineLimit(1)
-                Text("Escape to dismiss")
-                    .lineLimit(1)
+            // After a footer tick, "Completed · Undo" stands in for the hint.
+            if let pending = footerUndo {
+                TodoUndoBar(
+                    title: TodoUndoState.barTitle(for: pending.completion),
+                    identifier: "editorUndoBar"
+                ) {
+                    appState.undoLastCompletion()
+                }
+                .transition(PanelAnimation.prefersReducedMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.96)))
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    Text("Press \(appState.hotkeys.hotKeyDisplayString) again or Escape to dismiss")
+                        .lineLimit(1)
+                    Text("Escape to dismiss")
+                        .lineLimit(1)
+                }
+                .font(.footnote)
+                .foregroundStyle(RemoraTheme.secondaryText)
+                .padding(.horizontal, Spacing.sm)
+                .padding(.vertical, Spacing.xs)
+                .glassEffect(.regular, in: Capsule(style: .continuous))
             }
-            .font(.footnote)
-            .foregroundStyle(RemoraTheme.secondaryText)
-            .padding(.horizontal, Spacing.sm)
-            .padding(.vertical, Spacing.xs)
-            .glassEffect(.regular, in: Capsule(style: .continuous))
 
             Spacer(minLength: 0)
 
             GlassEffectContainer(spacing: Spacing.xs) {
                 HStack(spacing: Spacing.xxs) {
-                    IconButton(
-                        systemName: appState.editor.isActiveNotePinned ? "pin.fill" : "pin",
-                        accessibilityLabel: appState.editor.isActiveNotePinned ? "Remove from To-Do" : "Add to To-Do",
-                        tint: appState.editor.isActiveNotePinned ? RemoraTheme.accent : RemoraTheme.primaryText,
-                        size: 14,
-                        hitSize: 34
-                    ) {
-                        appState.togglePinForActiveNote()
-                    }
-                    .accessibilityIdentifier("editorPinButton")
+                    todoButton
+                        .accessibilityIdentifier("editorTodoButton")
 
                     IconButton(
                         systemName: "trash",
@@ -238,6 +241,58 @@ struct FloatingNoteEditorView: View {
             }
         }
         .frame(height: PanelLayout.footerHeight)
+        .animation(PanelAnimation.prefersReducedMotion ? nil : .easeOut(duration: 0.18), value: footerUndo?.token)
+    }
+
+    /// Exactly two states: "Add to To-Do", or the circle that ticks it off.
+    @ViewBuilder
+    private var todoButton: some View {
+        if appState.editor.isActiveNotePinned {
+            let noteID = activeStoredNote?.id
+            TodoCheckCircle(
+                noteID: noteID,
+                title: activeNoteTitle,
+                origin: .editor,
+                // The note it was clicked on: the tick lands after the
+                // checkmark, when the drawer may hold another note.
+                complete: { appState.completeActiveNote(expecting: noteID) },
+                iconSize: 14,
+                hitSize: 34,
+                highlightsOnHover: true
+            )
+            // A fresh circle each time, so a tick's checkmark never lingers.
+            .id(noteID)
+        } else {
+            IconButton(
+                systemName: "circle.badge.plus",
+                accessibilityLabel: "Add to To-Do",
+                size: 14,
+                hitSize: 34
+            ) {
+                appState.addActiveNoteToTodo()
+            }
+        }
+    }
+
+    private var activeStoredNote: ContextNote? {
+        appState.editor.activeContext.flatMap { appState.notesState.note(for: $0) }
+    }
+
+    private var activeNoteTitle: String {
+        let typed = appState.editor.editorTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !typed.isEmpty { return typed }
+        if let title = activeStoredNote?.title, !title.isEmpty { return title }
+        return appState.editor.activeContext?.displayName ?? "Note"
+    }
+
+    /// The pending undo, when it's a footer tick of the note open now.
+    /// Moving the drawer to another note drops the bar; the undo itself
+    /// lives on until it expires.
+    private var footerUndo: TodoUndoState.Pending? {
+        guard let pending = appState.todoUndo.pending(from: .editor),
+              let noteID = activeStoredNote?.id,
+              pending.completion.noteIDs.contains(noteID) else { return nil }
+        return pending
     }
 }
 

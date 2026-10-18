@@ -16,6 +16,9 @@ struct ContentView: View {
     /// suggestions, typing) must win over the list shortcuts below.
     @State private var isSearchFieldFocused = false
     @FocusState private var isListFocused: Bool
+    /// ⌘Return's latest request, handed to the To-Do rows' circles so the
+    /// tick shows its checkmark like a click.
+    @State private var tickRequest: TodoTickRequest?
     var body: some View {
         @Bindable var notes = appState.notesState
         let content = ScrollViewReader { proxy in
@@ -45,9 +48,9 @@ struct ContentView: View {
                     ),
                     onMoveDown: {
                         isListFocused = true
-                        if appState.notesState.keyboardFocusedNoteID == nil,
-                           let first = orderedVisibleNotes.first {
-                            appState.notesState.keyboardFocusedNoteID = first.id
+                        if appState.notesState.keyboardFocus == nil,
+                           let first = focusStops.first {
+                            appState.notesState.keyboardFocus = first
                         }
                     }
                 )
@@ -84,6 +87,7 @@ struct ContentView: View {
                         }
                         .padding(.horizontal, Spacing.lg)
                         .padding(.bottom, Spacing.lg)
+                        .environment(\.todoTickRequest, tickRequest)
                     }
                 }
             }
@@ -96,18 +100,39 @@ struct ContentView: View {
             .onKeyPress(.upArrow) { unlessSearching { moveKeyboardFocus(by: -1, proxy: proxy) } }
             .onKeyPress(.rightArrow) { unlessSearching { moveKeyboardFocus(by: 1, proxy: proxy) } }
             .onKeyPress(.leftArrow) { unlessSearching { moveKeyboardFocus(by: -1, proxy: proxy) } }
-            .onKeyPress(.return) { unlessSearching { openKeyboardFocusedNote() } }
-            .onKeyPress(.space) { unlessSearching { toggleKeyboardFocusedSelection() } }
+            // ⌘Return belongs to the hidden shortcut below, not to these.
+            .onKeyPress(.return, phases: [.down, .repeat]) { press in
+                press.modifiers.contains(.command) ? .ignored : unlessSearching { openKeyboardFocusedNote() }
+            }
+            .onKeyPress(.space, phases: [.down, .repeat]) { press in
+                press.modifiers.contains(.command) ? .ignored : unlessSearching { toggleKeyboardFocusedSelection() }
+            }
             .onKeyPress(.delete) { unlessSearching { confirmDeleteKeyboardFocusedNote() } }
             .onKeyPress(.deleteForward) { unlessSearching { confirmDeleteKeyboardFocusedNote() } }
-            .background(
+            .background {
                 // Hidden ⌘F target: moves focus into the search field.
-                Button("") { searchFocusRequestID = UUID() }
-                    .keyboardShortcut("f", modifiers: .command)
-                    .opacity(0)
-                    .frame(width: 0, height: 0)
-                    .accessibilityHidden(true)
-            )
+                hiddenShortcut("f") { searchFocusRequestID = UUID() }
+                // ⌘Return ticks the focused To-Do row.
+                hiddenShortcut(.return) { tickKeyboardFocusedRow() }
+                // ⌘Z exists only while this list's bar is showing, so it
+                // never swallows the key otherwise, and steps aside while
+                // the search field has the caret: there it undoes typing.
+                if allNotesUndo != nil, !isSearchFieldFocused {
+                    hiddenShortcut("z") { undoLastCompletion() }
+                }
+            }
+            .overlay(alignment: .bottom) {
+                if let pending = allNotesUndo {
+                    TodoUndoBar(title: TodoUndoState.barTitle(for: pending.completion)) {
+                        undoLastCompletion()
+                    }
+                    .padding(.bottom, Spacing.lg)
+                    .transition(PanelAnimation.prefersReducedMotion
+                        ? .opacity
+                        : .opacity.combined(with: .move(edge: .bottom)))
+                }
+            }
+            .animation(PanelAnimation.prefersReducedMotion ? nil : .easeOut(duration: 0.18), value: allNotesUndo?.token)
             .onChange(of: appState.notesState.allNotesScrollResetID) { _, _ in
                 proxy.scrollTo("top", anchor: .top)
                 isListFocused = true
@@ -117,12 +142,42 @@ struct ContentView: View {
         content
     }
 
+    /// The pending undo when it's for a tick made here (a row, a tile,
+    /// the multi-select bar, ⌘Return). A footer tick shows its undo in
+    /// the footer only.
+    private var allNotesUndo: TodoUndoState.Pending? {
+        appState.todoUndo.pending(from: .allNotes)
+    }
+
+    private func hiddenShortcut(_ key: KeyEquivalent, action: @escaping () -> Void) -> some View {
+        Button("", action: action)
+            .keyboardShortcut(key, modifiers: .command)
+            .opacity(0)
+            .frame(width: 0, height: 0)
+            .accessibilityHidden(true)
+    }
+
+    private func tickKeyboardFocusedRow() {
+        guard let noteID = NoteSectionBuilder.rowToTick(
+            focus: appState.notesState.keyboardFocus,
+            isSearchFieldFocused: isSearchFieldFocused
+        ) else { return }
+        tickRequest = TodoTickRequest(noteID: noteID)
+    }
+
+    private func undoLastCompletion() {
+        withAnimation(PanelAnimation.prefersReducedMotion ? nil : .timingCurve(0.23, 1, 0.32, 1, duration: 0.22)) {
+            appState.undoLastCompletion()
+        }
+    }
+
     // MARK: - Keyboard navigation
 
-    /// Notes in on-screen order (sections top to bottom, groups, then
-    /// notes) so arrow keys walk the list the way it reads.
-    private var orderedVisibleNotes: [ContextNote] {
-        appState.notesState.noteSections.flatMap(\.notes)
+    /// Keyboard stops in on-screen order (the To-Do rows, then every
+    /// tile) so arrow keys walk the list the way it reads. A to-do is a
+    /// stop in both places.
+    private var focusStops: [ListFocus] {
+        NoteSectionBuilder.focusOrder(appState.notesState.noteSections)
     }
 
     private var hasTodoNotes: Bool {
@@ -134,22 +189,22 @@ struct ContentView: View {
     }
 
     private func moveKeyboardFocus(by delta: Int, proxy: ScrollViewProxy) -> KeyPress.Result {
-        let notes = orderedVisibleNotes
-        guard !notes.isEmpty else { return .ignored }
+        let stops = focusStops
+        guard !stops.isEmpty else { return .ignored }
 
-        let currentIndex = appState.notesState.keyboardFocusedNoteID
-            .flatMap { id in notes.firstIndex(where: { $0.id == id }) }
+        let currentIndex = appState.notesState.keyboardFocus
+            .flatMap { focus in stops.firstIndex(of: focus) }
 
         let newIndex: Int
         if let currentIndex {
-            newIndex = max(0, min(notes.count - 1, currentIndex + delta))
+            newIndex = max(0, min(stops.count - 1, currentIndex + delta))
         } else {
-            newIndex = delta >= 0 ? 0 : notes.count - 1
+            newIndex = delta >= 0 ? 0 : stops.count - 1
         }
 
-        let target = notes[newIndex]
-        appState.notesState.keyboardFocusedNoteID = target.id
-        proxy.scrollTo(target.id, anchor: nil)
+        let target = stops[newIndex]
+        appState.notesState.keyboardFocus = target
+        proxy.scrollTo(target, anchor: nil)
         return .handled
     }
 
@@ -178,11 +233,12 @@ struct ContentView: View {
 
         if alert.runModal() == .alertFirstButtonReturn {
             // Move the highlight to a neighbor so keyboard flow continues.
-            let notes = orderedVisibleNotes
-            if let index = notes.firstIndex(where: { $0.id == note.id }) {
-                let neighbor = notes.indices.contains(index + 1) ? notes[index + 1]
-                    : (index > 0 ? notes[index - 1] : nil)
-                appState.notesState.keyboardFocusedNoteID = neighbor?.id
+            // The note's other stop (row or tile) goes with it.
+            let stops = focusStops
+            if let focus = appState.notesState.keyboardFocus, let index = stops.firstIndex(of: focus) {
+                let neighbor = stops[(index + 1)...].first { $0.noteID != note.id }
+                    ?? stops[..<index].last { $0.noteID != note.id }
+                appState.notesState.keyboardFocus = neighbor
             }
             appState.notesState.delete(note)
         }
@@ -190,8 +246,10 @@ struct ContentView: View {
     }
 
     private var keyboardFocusedNote: ContextNote? {
-        guard let id = appState.notesState.keyboardFocusedNoteID else { return nil }
-        return orderedVisibleNotes.first { $0.id == id }
+        guard let focus = appState.notesState.keyboardFocus else { return nil }
+        return appState.notesState.noteSections
+            .first { $0.id == focus.sectionID }?
+            .notes.first { $0.id == focus.noteID }
     }
 
     private var emptyStateView: some View {
@@ -241,8 +299,14 @@ struct ContentView: View {
             .buttonStyle(.borderless)
             .controlSize(.small)
 
-            IconButton(systemName: "pin", accessibilityLabel: "Add or remove selected notes from To-Do", size: 13, hitSize: 30) {
-                appState.togglePinForSelectedNotes()
+            // Ticks when every selected note is on To-Do, adds otherwise.
+            IconButton(
+                systemName: appState.notesState.selectionIsAllOnTodo ? "checkmark.circle" : "circle.badge.plus",
+                accessibilityLabel: appState.notesState.selectionIsAllOnTodo ? "Complete selected notes" : "Add selected notes to To-Do",
+                size: 13,
+                hitSize: 30
+            ) {
+                appState.toggleTodoForSelectedNotes()
             }
 
             IconButton(systemName: "trash", accessibilityLabel: "Delete selected notes", size: 13, hitSize: 30) {
@@ -268,7 +332,7 @@ struct ContentView: View {
 
 }
 
-/// Pinned notes as a compact, hand-ordered list above the tiles: one line
+/// To-dos as a compact, hand-ordered list above the tiles: one line
 /// each, dragged into whatever order the user wants to tackle them in.
 private struct TodoListSection: View {
     @Environment(AppState.self) private var appState
@@ -312,6 +376,7 @@ private struct TodoListSection: View {
                         canMoveUp: index > 0,
                         canMoveDown: index < notes.count - 1,
                         onMove: { delta in move(note, by: delta, in: notes) },
+                        onComplete: { complete(note) },
                         reorderGesture: reorderGesture(for: note, at: index, in: notes)
                     )
                     .environment(appState)
@@ -321,7 +386,10 @@ private struct TodoListSection: View {
                     // The dragged row tracks the pointer exactly; the rows
                     // it passes ease out of its way.
                     .animation(isDragged ? nil : settle, value: targetIndex(count: notes.count))
-                    .id(note.id)
+                    // A ticked row fades while the rows below close the
+                    // gap; with Reduce Motion it just goes. Never a slide.
+                    .transition(.opacity)
+                    .id(ListFocus(sectionID: section.id, noteID: note.id))
                 }
             }
             .padding(Spacing.xxs)
@@ -405,19 +473,27 @@ private struct TodoListSection: View {
             }
     }
 
+    // MARK: Ticking
+
+    /// The circle, the context menu and VoiceOver's Complete. A focused
+    /// row hands keyboard focus on before it goes (`completeTodos` does
+    /// that, whichever control ticked it).
+    private func complete(_ note: ContextNote) {
+        withAnimation(settle) {
+            appState.completeTodo([note.id], origin: .allNotes)
+        }
+    }
+
     /// VoiceOver's Move Up / Move Down.
     private func move(_ note: ContextNote, by delta: Int, in notes: [ContextNote]) {
-        var ids = notes.map(\.id)
-        guard let index = ids.firstIndex(of: note.id), ids.indices.contains(index + delta) else { return }
-        ids.swapAt(index, index + delta)
         withAnimation(settle) {
-            appState.notesState.reorderTodo(visibleOrder: ids)
+            appState.notesState.moveTodo(note.id, by: delta, among: notes.map(\.id))
         }
     }
 }
 
-/// One To-Do line: where the note lives, its title, and a faint first
-/// line. The pin (shown on hover) takes it back off the list.
+/// One To-Do line: the circle that ticks it off, where the note lives,
+/// its title, and a faint first line.
 private struct TodoRow<ReorderGesture: Gesture>: View {
     @Environment(AppState.self) private var appState
 
@@ -427,6 +503,7 @@ private struct TodoRow<ReorderGesture: Gesture>: View {
     let canMoveUp: Bool
     let canMoveDown: Bool
     let onMove: (Int) -> Void
+    let onComplete: () -> Void
     let reorderGesture: ReorderGesture
 
     @State private var isHovered = false
@@ -438,6 +515,12 @@ private struct TodoRow<ReorderGesture: Gesture>: View {
         let preview = NoteCardStyle.firstLinePreview(for: note)
 
         HStack(spacing: 0) {
+            // A sibling of the gesture view, never inside it: a click on
+            // the circle must not open the note or start a drag.
+            TodoCheckCircle(noteID: note.id, title: title, answersTickRequests: true, complete: onComplete)
+                .environment(appState)
+                .padding(.leading, Spacing.xxs)
+
             HStack(spacing: Spacing.xs) {
                 NoteContextIcon(context: note.context, size: 18)
 
@@ -458,7 +541,8 @@ private struct TodoRow<ReorderGesture: Gesture>: View {
 
                 Spacer(minLength: 0)
             }
-            .padding(.leading, Spacing.xs)
+            .padding(.leading, Spacing.xxs)
+            .padding(.trailing, Spacing.xs)
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle())
             .gesture(reorderGesture)
@@ -467,27 +551,23 @@ private struct TodoRow<ReorderGesture: Gesture>: View {
             .accessibilityAddTraits(.isButton)
             .accessibilityAction { appState.open(note) }
             .accessibilityActions {
+                Button("Complete") { onComplete() }
                 if canMoveUp { Button("Move Up") { onMove(-1) } }
                 if canMoveDown { Button("Move Down") { onMove(1) } }
             }
             .accessibilityIdentifier("todoRow")
-
-            NotePinButton(note: note)
-                .environment(appState)
-                .opacity(isHovered || isKeyboardFocused ? 1 : 0)
-                .padding(.trailing, Spacing.xxs)
         }
         .background(rowBackground)
         .scaleEffect(isDragged ? 1.01 : 1)
         .onHover { isHovered = $0 }
         .contextMenu {
             Button("Open") { appState.open(note) }
-            Button("Remove from To-Do") { appState.togglePin(note) }
+            Button("Complete") { onComplete() }
         }
     }
 
     private var isKeyboardFocused: Bool {
-        appState.notesState.keyboardFocusedNoteID == note.id
+        appState.notesState.keyboardFocus == ListFocus(sectionID: NoteSectionBuilder.todoSectionID, noteID: note.id)
     }
 
     private var isSelected: Bool {
@@ -536,7 +616,7 @@ private struct CountedSectionHeading: View {
     }
 }
 
-/// Every unpinned note in one grid, newest first. Nothing is grouped: the
+/// Every note in one grid, to-dos included, newest first. Nothing is grouped: the
 /// icon and source line on each tile say where a note lives, so tiles
 /// from different places share rows and fill the pane's width.
 private struct NoteGridSection: View {
@@ -560,7 +640,7 @@ private struct NoteGridSection: View {
                 ForEach(section.notes) { note in
                     NoteTile(note: note)
                         .environment(appState)
-                        .id(note.id)
+                        .id(ListFocus(sectionID: section.id, noteID: note.id))
                 }
             }
             .accessibilityElement(children: .contain)
@@ -583,8 +663,9 @@ private struct NoteTile: View {
     private static let headerHeight: CGFloat = 26
     private static let footerHeight: CGFloat = 22
     private static let checkboxWidth: CGFloat = 22
-    /// Pin (26) + delete (26) + checkbox.
-    private static let actionsWidth: CGFloat = 52 + checkboxWidth
+    private static let buttonWidth: CGFloat = 26
+    /// Delete + to-do button + checkbox.
+    private static let actionsWidth: CGFloat = 2 * buttonWidth + checkboxWidth
 
     var body: some View {
         let text = NoteCardStyle.tileText(for: note)
@@ -617,6 +698,8 @@ private struct NoteTile: View {
         }
         .onHover { isHovered = $0 }
         .help(NoteCardStyle.returnCaveat(for: note) ?? "")
+        // One group per tile, so its circle and buttons read as its own.
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("noteTile")
     }
 
@@ -641,14 +724,20 @@ private struct NoteTile: View {
 
     private var actions: some View {
         HStack(spacing: 0) {
-            Group {
-                NotePinButton(note: note)
-                    .environment(appState)
+            // Hover-only actions fade their icon, not the button, so
+            // VoiceOver still finds them on a tile the pointer isn't over.
+            NoteDeleteButton(note: note, isRevealed: showsActions)
+                .environment(appState)
 
-                NoteDeleteButton(note: note)
+            // A to-do's circle is always there; "Add to To-Do" waits for
+            // the pointer like the other actions.
+            if note.isPinned {
+                TodoCheckCircle(noteID: note.id, title: NoteCardStyle.primaryTitle(for: note))
+                    .environment(appState)
+            } else {
+                TodoAddButton(note: note, isRevealed: showsActions)
                     .environment(appState)
             }
-            .opacity(showsActions ? 1 : 0)
 
             // Trailing, so it stays put when it is the only one showing.
             NoteSelectionCheckbox(noteID: note.id)
@@ -679,8 +768,11 @@ private struct NoteTile: View {
     /// Once anything is selected, every tile offers its checkbox.
     private var isSelecting: Bool { !appState.notesState.selectedNoteIDs.isEmpty }
 
+    /// Room the source name leaves for whichever actions are showing.
+    /// A to-do's circle always shows, with the checkbox's slot beside it.
     private var reservedActionsWidth: CGFloat {
         if showsActions { return Self.actionsWidth }
+        if note.isPinned { return Self.buttonWidth + Self.checkboxWidth }
         return isSelecting ? Self.checkboxWidth : 0
     }
 
@@ -689,7 +781,7 @@ private struct NoteTile: View {
     }
 
     private var isKeyboardFocused: Bool {
-        appState.notesState.keyboardFocusedNoteID == note.id
+        appState.notesState.keyboardFocus == ListFocus(sectionID: NoteSectionBuilder.notesSectionID, noteID: note.id)
     }
 
     /// Neutral on purpose: the icon carries the note's identity, and the

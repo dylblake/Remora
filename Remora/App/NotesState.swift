@@ -14,6 +14,18 @@ nonisolated struct TagSummary: Hashable, Sendable, Identifiable {
     var id: String { name }
 }
 
+/// What a tick took off the To-Do list, so Undo can put it back. Each
+/// entry is a note's index in `todoOrder` just before it was removed.
+nonisolated struct TodoCompletion: Equatable, Sendable {
+    struct Entry: Equatable, Sendable {
+        let noteID: UUID
+        let index: Int
+    }
+    /// Ascending by index.
+    let entries: [Entry]
+    var noteIDs: [UUID] { entries.map(\.noteID) }
+}
+
 @MainActor
 @Observable
 final class NotesState {
@@ -45,9 +57,9 @@ final class NotesState {
     @ObservationIgnored private var searchTask: Task<Void, Never>?
     var selectedNoteIDs: Set<UUID> = []
     var allNotesScrollResetID = UUID()
-    /// Row highlighted by keyboard navigation in All Notes (distinct from
-    /// the checkbox multi-selection).
-    var keyboardFocusedNoteID: UUID?
+    /// Row or tile highlighted by keyboard navigation in All Notes
+    /// (distinct from the checkbox multi-selection).
+    var keyboardFocus: ListFocus?
 
     /// Notes ever created, for the free-trial gate. Monotonic: deleting
     /// notes doesn't refund trial slots.
@@ -142,30 +154,85 @@ final class NotesState {
         onNotesDeleted(deleted)
     }
 
-    /// Toggles pin for a single note (note-level only — does NOT sync editor state).
-    /// The AppState coordinator wrapper handles `isActiveNotePinned` sync.
-    func togglePin(_ note: ContextNote) {
-        let updatedNote = note.copying(updatedAt: .now, isPinned: !note.isPinned)
-        upsert(updatedNote)
-    }
-
-    /// Toggles pin for all selected notes (note-level only).
-    /// Returns the new pin state so the coordinator can sync editor state.
-    @discardableResult
-    func togglePinForSelectedNotes() -> Bool? {
-        guard !selectedNoteIDs.isEmpty else { return nil }
-        let selected = selectedNoteIDs
-        let selectedNotes = notes.filter { selected.contains($0.id) }
-        let allPinned = selectedNotes.allSatisfy(\.isPinned)
-        let nextPinned = !allPinned
-
+    /// Puts notes on the To-Do list, at the end. `updatedAt` is left
+    /// alone so their tiles keep their place in the grid.
+    func addToTodo(_ ids: Set<UUID>) {
+        guard notes.contains(where: { ids.contains($0.id) && !$0.isPinned }) else { return }
         notes = notes.map { note in
-            guard selected.contains(note.id) else { return note }
-            return note.copying(updatedAt: .now, isPinned: nextPinned)
+            guard ids.contains(note.id), !note.isPinned else { return note }
+            return note.copying(isPinned: true)
         }
         save()
+    }
+
+    /// Ticks notes off the To-Do list, keeping `updatedAt`. Returns where
+    /// each one sat, for Undo, or nil when none of them was on the list.
+    @discardableResult
+    func completeTodos(_ ids: [UUID]) -> TodoCompletion? {
+        let entries = todoOrder.enumerated()
+            .filter { ids.contains($0.element) }
+            .map { TodoCompletion.Entry(noteID: $0.element, index: $0.offset) }
+        guard !entries.isEmpty else { return nil }
+
+        let completed = Set(entries.map(\.noteID))
+        // Whatever ticked it (its row, its tile, the multi-select bar, the
+        // editor), a focused row hands focus on before it goes.
+        if let focus = keyboardFocus, focus.sectionID == NoteSectionBuilder.todoSectionID,
+           completed.contains(focus.noteID) {
+            keyboardFocus = NoteSectionBuilder.focusAfterTicking(focus, in: noteSections, alongWith: completed)
+        }
+        notes = notes.map { completed.contains($0.id) ? $0.copying(isPinned: false) : $0 }
+        save()
+        return TodoCompletion(entries: entries)
+    }
+
+    /// True when something is selected and every selected note is on
+    /// To-Do: the multi-select bar's to-do button then ticks, not adds.
+    var selectionIsAllOnTodo: Bool {
+        let selectedNotes = notes.filter { selectedNoteIDs.contains($0.id) }
+        return !selectedNotes.isEmpty && selectedNotes.allSatisfy(\.isPinned)
+    }
+
+    /// The multi-select bar's to-do button. When every selected note is
+    /// on To-Do it ticks them all as one batch and returns it, for Undo;
+    /// otherwise it adds the ones that aren't and returns nil.
+    @discardableResult
+    func toggleTodoForSelectedNotes() -> TodoCompletion? {
+        guard !selectedNoteIDs.isEmpty else { return nil }
+        let selected = selectedNoteIDs
+        let completesBatch = selectionIsAllOnTodo
         selectedNoteIDs.removeAll()
-        return nextPinned
+
+        guard completesBatch else {
+            addToTodo(selected)
+            return nil
+        }
+        return completeTodos(notes.filter { selected.contains($0.id) }.map(\.id))
+    }
+
+    /// Undoes a tick: the notes go back on To-Do at the indexes they had.
+    /// A note deleted since is skipped.
+    func restore(_ completion: TodoCompletion) {
+        let present = Set(notes.map(\.id))
+        // A skipped note's slot closes up: the ones after it in the batch
+        // move down by one, so they keep their places among the others.
+        var skipped = 0
+        let entries = completion.entries.sorted { $0.index < $1.index }.compactMap { entry -> TodoCompletion.Entry? in
+            guard present.contains(entry.noteID) else {
+                skipped += 1
+                return nil
+            }
+            return TodoCompletion.Entry(noteID: entry.noteID, index: entry.index - skipped)
+        }
+        guard !entries.isEmpty else { return }
+
+        let restored = Set(entries.map(\.noteID))
+        // didSet appends the re-flagged notes at the end; the order is
+        // then rewritten with each one back in its slot.
+        notes = notes.map { restored.contains($0.id) ? $0.copying(isPinned: true) : $0 }
+        todoOrder = Self.restoringOrder(todoOrder.filter { !restored.contains($0) }, inserting: entries)
+        noteSections = NoteSectionBuilder.build(from: filteredNotes, todoOrder: todoOrder, includesTodo: searchText.isEmpty)
+        save()
     }
 
     /// Applies a drag in the To-Do list. `visibleOrder` is the new order
@@ -180,8 +247,17 @@ final class NotesState {
         guard reordered != todoOrder else { return }
 
         todoOrder = reordered
-        noteSections = NoteSectionBuilder.build(from: filteredNotes, todoOrder: todoOrder)
+        noteSections = NoteSectionBuilder.build(from: filteredNotes, todoOrder: todoOrder, includesTodo: searchText.isEmpty)
         save()
+    }
+
+    /// VoiceOver's Move Up (-1) / Move Down (+1) on a To-Do row: swaps
+    /// it with its neighbour among the rows on screen (`visibleOrder`).
+    func moveTodo(_ id: UUID, by delta: Int, among visibleOrder: [UUID]) {
+        var ids = visibleOrder
+        guard let index = ids.firstIndex(of: id), ids.indices.contains(index + delta) else { return }
+        ids.swapAt(index, index + delta)
+        reorderTodo(visibleOrder: ids)
     }
 
     func flush() {
@@ -190,6 +266,17 @@ final class NotesState {
 
     private func save() {
         store.save(notes: notes, todoOrder: todoOrder)
+    }
+
+    /// Inserts each entry at its recorded index, lowest first, so a batch
+    /// lands back in its previous order. Indexes past the end clamp to it.
+    nonisolated static func restoringOrder(_ current: [UUID], inserting entries: [TodoCompletion.Entry]) -> [UUID] {
+        let inserted = Set(entries.map(\.noteID))
+        var order = current.filter { !inserted.contains($0) }
+        for entry in entries.sorted(by: { $0.index < $1.index }) {
+            order.insert(entry.noteID, at: min(max(entry.index, 0), order.count))
+        }
+        return order
     }
 
     /// Drops IDs that are no longer pinned and appends newly pinned notes
@@ -212,7 +299,7 @@ final class NotesState {
         searchTask?.cancel()
         recentNotes = Array(_sortedNotes.prefix(5))
         filteredNotes = Self.filter(notes: _sortedNotes, query: searchText)
-        noteSections = NoteSectionBuilder.build(from: filteredNotes, todoOrder: todoOrder)
+        noteSections = NoteSectionBuilder.build(from: filteredNotes, todoOrder: todoOrder, includesTodo: searchText.isEmpty)
     }
 
     /// Typing path: debounced, with matching and section building off the
@@ -236,7 +323,7 @@ final class NotesState {
 
             let result: ([ContextNote], [NoteSection]) = await Task.detached(priority: .userInitiated) {
                 let filtered = NotesState.filter(notes: source, query: query)
-                return (filtered, NoteSectionBuilder.build(from: filtered, todoOrder: order))
+                return (filtered, NoteSectionBuilder.build(from: filtered, todoOrder: order, includesTodo: false))
             }.value
 
             guard let self, !Task.isCancelled, self.searchText == query else { return }

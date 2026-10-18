@@ -296,4 +296,93 @@ final class NoteEditorUITests: XCTestCase {
         let stored = (try? String(contentsOf: storeDirectory.appending(path: "notes.json"), encoding: .utf8)) ?? "<no notes.json>"
         XCTAssertTrue(app.staticTexts["UITest Title"].firstMatch.waitForExistence(timeout: 5), "saved note should be listed; store=\(stored.prefix(600))")
     }
+
+    // MARK: To-Do in the footer
+
+    /// The footer's to-do control has two states, a footer tick offers
+    /// "Completed · Undo" in place of the hint, and Undo puts it back.
+    func testFooterAddsTicksAndUndoes() throws {
+        let textView = openEditor()
+        textView.typeText("Footer to-do")
+        XCTAssertTrue(waitForEditorText { $0.contains("Footer to-do") })
+
+        let todo = button("editorTodoButton")
+        XCTAssertEqual(todo.label, "Add to To-Do")
+        XCTAssertFalse(app.descendants(matching: .any).matching(identifier: "editorPinButton").firstMatch.exists)
+        todo.click()
+
+        let isCircle = NSPredicate(format: "label BEGINSWITH %@", "Complete \u{201C}")
+        expectation(for: isCircle, evaluatedWith: todo)
+        waitForExpectations(timeout: 3)
+
+        todo.click()
+        let undoBar = button("editorUndoBar")
+        XCTAssertTrue(undoBar.staticTexts["Completed"].exists)
+        XCTAssertFalse(app.staticTexts["Escape to dismiss"].exists, "the bar stands in for the hint")
+        XCTAssertEqual(todo.label, "Add to To-Do", "a ticked note is off To-Do")
+
+        undoBar.buttons["Undo"].click()
+        expectation(for: isCircle, evaluatedWith: todo)
+        waitForExpectations(timeout: 3)
+        XCTAssertTrue(undoBar.waitForNonExistence(timeout: 3), "Undo is used up")
+
+        // Let the hint settle back in before Escape.
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "value ENDSWITH %@", "to dismiss")).firstMatch.waitForExistence(timeout: 3))
+        textView.click()
+        XCTAssertTrue(textView.waitForExistence(timeout: 3))
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(textView.waitForNonExistence(timeout: 5), "Escape should dismiss the drawer")
+
+        let data = try Data(contentsOf: storeDirectory.appending(path: "notes.json"))
+        let json = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let notes = try XCTUnwrap(json["notes"] as? [[String: Any]])
+        let note = try XCTUnwrap(notes.first { ($0["body"] as? String)?.contains("Footer to-do") == true })
+        XCTAssertEqual(note["isPinned"] as? Bool, true)
+        let id = try XCTUnwrap(note["id"] as? String)
+        XCTAssertEqual(json["todoOrder"] as? [String], [id])
+    }
+
+    /// Add to To-Do in a new, empty drawer, then type and close: the note
+    /// is saved on To-Do, at the bottom of the list.
+    func testAddToToDoInEmptyDrawerAppendsOnSave() throws {
+        // Relaunch on a store that already has two to-dos.
+        app.terminate()
+        try FileManager.default.createDirectory(at: storeDirectory, withIntermediateDirectories: true)
+        let first = "AAAAAAAA-1111-1111-1111-111111111111"
+        let second = "BBBBBBBB-2222-2222-2222-222222222222"
+        func seed(_ id: String, _ name: String) -> String {
+            """
+            {"id": "\(id)", "context": {"kind": "application", "identifier": "com.example.\(name)", "displayName": "Example"},
+             "body": "\(name)", "createdAt": "2026-09-29T10:00:00Z", "updatedAt": "2026-09-29T10:00:00Z",
+             "isPinned": true, "title": "\(name)"}
+            """
+        }
+        let json = """
+        {"version": 3, "todoOrder": ["\(first)", "\(second)"], "notes": [\(seed(first, "one")), \(seed(second, "two"))]}
+        """
+        try json.write(to: storeDirectory.appending(path: "notes.json"), atomically: true, encoding: .utf8)
+        app.launch()
+
+        let textView = openEditor()
+        let todo = button("editorTodoButton")
+        XCTAssertEqual(todo.label, "Add to To-Do")
+        todo.click()
+        expectation(for: NSPredicate(format: "label BEGINSWITH %@", "Complete \u{201C}"), evaluatedWith: todo)
+        waitForExpectations(timeout: 3)
+
+        textView.click()
+        textView.typeText("Fresh to-do")
+        XCTAssertTrue(waitForEditorText { $0.contains("Fresh to-do") })
+        app.typeKey(.escape, modifierFlags: [])
+        XCTAssertTrue(textView.waitForNonExistence(timeout: 5), "Escape should dismiss the drawer")
+        RunLoop.current.run(until: Date().addingTimeInterval(1))
+
+        let data = try Data(contentsOf: storeDirectory.appending(path: "notes.json"))
+        let stored = try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        let notes = try XCTUnwrap(stored["notes"] as? [[String: Any]])
+        let note = try XCTUnwrap(notes.first { ($0["body"] as? String)?.contains("Fresh to-do") == true })
+        XCTAssertEqual(note["isPinned"] as? Bool, true)
+        let id = try XCTUnwrap(note["id"] as? String)
+        XCTAssertEqual(stored["todoOrder"] as? [String], [first, second, id], "a new to-do goes to the bottom")
+    }
 }

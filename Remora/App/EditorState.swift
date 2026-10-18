@@ -20,6 +20,7 @@ final class EditorState {
     var editorErrorMessage: String?
     var isEditorPresented = false
     var isViewingOrphanedNote = false
+    /// On To-Do.
     var isActiveNotePinned = false
     private var contextPollingTask: Task<Void, Never>?
     private var autosaveTask: Task<Void, Never>?
@@ -115,6 +116,33 @@ final class EditorState {
         isActiveNotePinned = note.isPinned
     }
 
+    /// Picks up a change to the open note's To-Do flag made elsewhere (a
+    /// tick or undo in All Notes), so the next save doesn't write the old
+    /// flag back. A drawer with no stored note yet keeps its own flag.
+    func syncActiveNoteTodoFlag() {
+        guard let context = activeContext, let stored = notesState.note(for: context) else { return }
+        isActiveNotePinned = stored.isPinned
+    }
+
+    /// True while the drawer is on the stored note `noteID`, or, for nil,
+    /// on a context with nothing stored yet.
+    func isShowingStoredNote(_ noteID: UUID?) -> Bool {
+        guard let context = activeContext else { return false }
+        return notesState.note(for: context)?.id == noteID
+    }
+
+    /// The open note as stored, after saving any typing first, for the
+    /// footer's to-do control. Typing is a real edit, so that save writes
+    /// a new date; a flag change on its own never does. Nil when nothing
+    /// is stored yet (an empty new drawer).
+    func storedActiveNoteSavingTyping() -> ContextNote? {
+        guard let context = activeContext else { return nil }
+        if hasUnpersistedChanges() {
+            persistCurrentEditorContent(deleteIfEmpty: false)
+        }
+        return notesState.note(for: context)
+    }
+
     // MARK: - Persistence
 
     @discardableResult
@@ -155,6 +183,17 @@ final class EditorState {
         return true
     }
 
+    /// The drawer is closing or moving to another note: save only when
+    /// something in it changed (typing, a title, an emptied note to
+    /// delete, or a drawer with nothing stored yet). An untouched note
+    /// keeps its date, so opening and closing it, or ticking it in the
+    /// footer, never moves it up the grid.
+    @discardableResult
+    func persistCurrentEditorContentIfChanged(deleteIfEmpty: Bool = true) -> Bool {
+        guard hasUnpersistedChanges() else { return false }
+        return persistCurrentEditorContent(deleteIfEmpty: deleteIfEmpty)
+    }
+
     // MARK: - Autosave
 
     /// Called on every edit; persists the note a couple of seconds after
@@ -189,6 +228,14 @@ final class EditorState {
         }
 
         persistCurrentEditorContent(deleteIfEmpty: false)
+    }
+
+    /// True when the drawer holds typing that isn't stored yet.
+    func hasUnpersistedChanges() -> Bool {
+        guard let context = activeContext else { return false }
+        let currentAttributedText = currentEditorAttributedTextSnapshot()
+        let trimmed = currentAttributedText.string.trimmingCharacters(in: .whitespacesAndNewlines)
+        return hasUnpersistedChanges(context: context, attributedText: currentAttributedText, trimmedBody: trimmed)
     }
 
     /// True when the editor buffer differs from what's stored for this
@@ -406,7 +453,7 @@ final class EditorState {
         // the user into a context that would start a new one.
         guard canCreateNote(context) else { return }
 
-        persistCurrentEditorContent()
+        persistCurrentEditorContentIfChanged()
         activeContext = context
         loadEditorState(for: context)
 

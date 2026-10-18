@@ -7,6 +7,7 @@ struct ContextNote: Codable, Identifiable, Hashable {
     let richTextData: Data?
     let createdAt: Date
     let updatedAt: Date
+    /// On To-Do.
     let isPinned: Bool
     let title: String?
     let tags: [String]

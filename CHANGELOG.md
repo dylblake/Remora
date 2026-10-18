@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+### To-Do you can check off
+- **Tick a to-do off with its circle.** Every row on the To-Do list starts with an empty circle; click it and a checkmark shows for a moment before the note leaves the list. The note itself stays, so ticking a to-do never costs you what you wrote. Right-click a row for Complete, or use VoiceOver's Complete action.
+- **To-dos stay in the grid too.** A note on To-Do keeps its tile in the grid, in its usual newest-first place and with its date unchanged, and the tile carries the same circle, so you can tick it off from either.
+- **⌘Return ticks the row you're on.** With a To-Do row highlighted by the arrow keys, ⌘Return ticks it and moves on to the next row. Return still opens the note and Space still selects it.
+- **Completed · Undo.** For a few seconds after a tick, All Notes offers Undo, and ⌘Z does the same when you're not typing in the search field (there it still undoes your typing). The note goes back to exactly where it was on the list. Ticking several selected notes at once reads "Completed 3" and comes back as one.
+- **Tick off the note you're writing in.** The note drawer's footer shows Add to To-Do, or the circle once the note is on the list. A tick from the footer offers its own Undo there, in place of the hint about closing the drawer.
+- **Add to To-Do replaces the pin.** The pin icon is gone everywhere. Tiles, the drawer and the multi-select bar offer Add to To-Do instead, and a new to-do joins the bottom of the list. Selecting only to-dos turns the multi-select button into a checkmark that completes the whole batch.
+- Searching All Notes searches the grid, so the To-Do list steps aside while you type and comes back when the search is cleared.
+- VoiceOver can reach a tile's Add to To-Do and Delete without the pointer being over the tile.
+- Notes pinned in an earlier version are on the To-Do list in the same order, with nothing to do.
+- Opening a note and closing it without editing no longer moves it to the top of Notes. Only a real edit gives a note a new date.
+
 ## 2.0.3
 
 ### The note and All Notes are one stack
